@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 2,
+  "services": {"slack": {"buildTarget": "runtime", "volumes": {"data": "/state"}, "memoryMiB": 256, "cpus": 0.5, "healthcheck": ["node", "/app/bin/ez-slack.mjs", "health"]}},
+  "commands": {"slack": {"service": "slack", "argv": ["node", "/app/bin/ez-slack.mjs"]}}
+}

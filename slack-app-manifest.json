@@ -1,0 +1,6 @@
+{
+  "display_information": {"name": "ANNIe", "description": "Your native Ez agent, with one conversation per channel"},
+  "features": {"bot_user": {"display_name": "ANNIe", "always_online": false}},
+  "oauth_config": {"scopes": {"bot": ["channels:history", "groups:history", "chat:write"]}},
+  "settings": {"event_subscriptions": {"bot_events": ["message.channels", "message.groups"]}, "socket_mode_enabled": true, "org_deploy_enabled": false, "token_rotation_enabled": false}
+}
