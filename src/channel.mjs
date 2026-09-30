@@ -38,7 +38,9 @@ export class Channel {
         if (r.channel) { if (r.inputHash !== input.inputHash || r.channel !== input.channel) throw Error('Slack event ID reused'); duplicate = true; return; }
         Object.assign(r, { channel: input.channel, scope: input.scope, requestId: input.requestId, inputHash: input.inputHash });
       });
-      await ack();
+      // A failed provider acknowledgement cannot discard already recorded input.
+      // Slack may replay it; the receipt prevents a second native admission.
+      await ack().catch(() => {});
       if (duplicate) { if (receipt.runId && !receipt.closed) this.watch(receipt); return { duplicate: true }; }
       if (input.text.trim().startsWith('!ez')) {
         // Control mutations are deliberate, once-only UI operations; never replay after uncertainty.

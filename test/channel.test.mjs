@@ -73,6 +73,12 @@ test('uncertain admission never resubmits on replay or restart', async t => {
   await assert.rejects(f.agent.receive(event()),/Lost admission/);await f.agent.receive(event());await f.agent.resumeDelivery();
   assert.equal(f.calls.length,1);assert.equal((await f.receipts.load())[0].uncertain,true);
 });
+test('a lost Socket acknowledgement does not discard durable human input', async t => {
+  const f=await fixture(t);
+  await f.agent.receive(event(),async()=>{throw Error('Slack socket disconnected');});
+  await settled(f.agent);await f.agent.receive(event());
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,1);assert.equal(f.sends.length,1);
+});
 test('uncertain Slack send stays unconfirmed and is not resent after restart', async t => {
   const f=await fixture(t,{send:()=>{throw Object.assign(Error('Lost provider response'),{uncertain:true});}});
   await f.agent.receive(event());await settled(f.agent);await f.agent.receive(event());await f.agent.resumeDelivery();
