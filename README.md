@@ -48,7 +48,7 @@ owner or bypass core authority. Use HTTPS outside a trusted private network.
 ## Slack onboarding
 
 ```sh
-ez tools serve 18878:8788 slack setup --team T_WORKSPACE_ID --name ANNIe
+ez tools serve 18878:8788 slack setup --team T_WORKSPACE_ID --name annie
 ```
 
 Open `http://127.0.0.1:18878`. The local form links the prepared app manifest.
@@ -143,7 +143,7 @@ pnpm smoke:docker
 ```
 
 Docker smoke installs through the real Ez manager, exercises registered CLI,
-restart/crash recovery, setup routing and data-preserving uninstall. Synthetic
+restart/crash recovery and data-preserving uninstall. Synthetic
 provider tests exercise scoped routing, canonical AI controls, streaming delivery,
 deduplication and uncertainty. They are not live Slack acceptance. Run one real
 native channel exchange after credentials are supplied, then a two-channel marker

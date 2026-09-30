@@ -1,18 +1,59 @@
 {
   "name": "@jc_stack/ez-slack",
-  "version": "0.1.0-beta.1.rc.2",
+  "version": "0.1.0-beta.1.rc.3",
   "private": true,
   "type": "module",
   "description": "Slack channels for an existing native Ez agent",
   "license": "MIT",
-  "engines": {"node": ">=22"},
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@10.30.3",
-  "bin": {"ez-slack": "bin/ez-slack.mjs"},
-  "files": ["bin", "src", "web", "skills", "docker", "scripts", "test", "ez-plugin.json", "ez-deployment.json", "slack-app-manifest.json", "Dockerfile", ".dockerignore", "README.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
-  "scripts": {"test": "node --test test/*.test.mjs", "verify": "node --test test/*.test.mjs && node --check src/server.mjs && node --check src/cli.mjs", "release:check": "node scripts/release-check.mjs", "smoke:docker": "node docker/smoke.mjs"},
-  "dependencies": {"@slack/socket-mode": "3.0.1", "@jc_stack/ez-agents": "0.1.0-beta.42"},
-  "repository": {"type": "git", "url": "git+https://github.com/jdorado/ez-slack.git"},
+  "bin": {
+    "ez-slack": "bin/ez-slack.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "web",
+    "skills",
+    "docker",
+    "scripts",
+    "test",
+    "ez-plugin.json",
+    "ez-deployment.json",
+    "slack-app-manifest.json",
+    "Dockerfile",
+    ".dockerignore",
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "verify": "node --test test/*.test.mjs && node --check src/server.mjs && node --check src/cli.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "smoke:docker": "node docker/smoke.mjs"
+  },
+  "dependencies": {
+    "@slack/socket-mode": "3.0.1",
+    "@jc_stack/ez-agents": "0.1.0-beta.42"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jdorado/ez-slack.git"
+  },
   "homepage": "https://github.com/jdorado/ez-slack#readme",
-  "bugs": {"url": "https://github.com/jdorado/ez-slack/issues"},
-  "ezRelease": {"protocol": 1, "kind": "plugin", "stateSchema": 1, "mainProtocol": 1}
+  "bugs": {
+    "url": "https://github.com/jdorado/ez-slack/issues"
+  },
+  "ezRelease": {
+    "protocol": 1,
+    "kind": "plugin",
+    "stateSchema": 1,
+    "mainProtocol": 1
+  }
 }
