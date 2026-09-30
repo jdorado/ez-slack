@@ -9,6 +9,7 @@ import { Slack } from '../src/slack.mjs';
 import { serve } from '../src/server.mjs';
 import { rpc } from '../src/ipc.mjs';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 
 const config={teamId:'T123456',appId:'A123456',botToken:'xoxb-synthetic-private-bot',appToken:'xapp-synthetic-private-app'};
 async function dir(t){const d=await mkdtemp(join(tmpdir(),'ez-slack-setup-'));t.after(()=>rm(d,{recursive:true,force:true}));return d;}
@@ -22,6 +23,13 @@ test('credentials validate scheme, fields, workspace and authenticated bot ident
   const result=await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:'T123456',user_id:'U123456',bot_id:'B123456'}:{url:'wss://private-token'}});
   assert.equal(result.botUserId,'U123456');assert(!JSON.stringify(result).includes('synthetic-private'));
   assert.equal((await stat(join(d,'slack.json'))).mode&0o777,0o600);
+});
+test('malformed credential input never exposes JSON excerpts to CLI output',async()=>{
+  const result=await new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[new URL('../bin/ez-slack.mjs',import.meta.url).pathname,'configure'],{stdio:['pipe','pipe','pipe']});let output='';
+    child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);child.on('error',reject);child.on('close',code=>resolve({code,output}));child.stdin.end('{"token":SYNTHETIC_PRIVATE_TOKEN}');
+  });
+  assert.equal(result.code,1);assert(result.output.includes('Invalid JSON input'));assert(!result.output.includes('SYNTHETIC'));
 });
 test('setup is local and same-origin with CSRF, no secret readback',async t=>{
   const d=await dir(t);await saveConnection(d,{url:'https://agent.example',token:'a'.repeat(43)});

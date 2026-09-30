@@ -19,7 +19,9 @@ export async function rpc(directory, command, args = {}) {
 export async function jsonBody(request, max = 16384) {
   let bytes = 0; const parts = [];
   for await (const part of request) { bytes += part.length; if (bytes > max) throw Error('Request too large'); parts.push(part); }
-  const v = JSON.parse(Buffer.concat(parts).toString('utf8'));
+  let v;
+  try { v = JSON.parse(Buffer.concat(parts).toString('utf8')); }
+  catch { throw Error('Invalid JSON input'); }
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw Error('Expected JSON object');
   return v;
 }
