@@ -77,8 +77,10 @@ test('linking defaults and offline CLI derive the same native menu from the cont
 test('slash membership requires an invited non-DM channel and an actual human member',async()=>{
   const requests=[];
   const s=new Slack('synthetic',async(url,args)=>{
-    const body=JSON.parse(args.body);requests.push({url,body});
-    if(url.endsWith('/conversations.info'))return Response.json({ok:true,channel:{id:body.channel,is_channel:true,is_archived:false,is_im:false,is_mpim:false}});
+    if (args.method !== 'GET' || args.body !== undefined) return Response.json({ok:false,error:'invalid_arguments'});
+    const endpoint=new URL(url),body=Object.fromEntries(endpoint.searchParams);requests.push({url,body});
+    assert.equal(endpoint.searchParams.has('token'),false);assert.equal(args.headers.authorization,'Bearer synthetic');
+    if(endpoint.pathname==='/api/conversations.info')return Response.json({ok:true,channel:{id:body.channel,is_channel:true,is_archived:false,is_im:false,is_mpim:false}});
     if (!(body.limit > 0 && body.limit < 1000)) return Response.json({ok:false,error:'invalid_arguments'});
     return Response.json({ok:true,members:body.cursor?['U123456']:['U999999'],response_metadata:{next_cursor:body.cursor?'':'next'}});
   });
@@ -88,7 +90,7 @@ test('slash membership requires an invited non-DM channel and an actual human me
     assert.equal(await denied.channelMember('C123456','U123456','U999999'),false);assert.equal(calls,1);
   }
   for(const members of [['U123456'],['U999999'],[]]) {
-    const denied=new Slack('synthetic',async url=>Response.json(url.endsWith('/conversations.info')?{ok:true,channel:{id:'C123456',is_group:true}}:{ok:true,members}));
+    const denied=new Slack('synthetic',async url=>Response.json(new URL(url).pathname==='/api/conversations.info'?{ok:true,channel:{id:'C123456',is_group:true}}:{ok:true,members}));
     assert.equal(await denied.channelMember('C123456','U123456','U999999'),false);
   }
 });
@@ -119,8 +121,8 @@ test('settings CLI and service read the canonical thread scope without changing 
   let membershipIssue=false;
   globalThis.fetch=async(url,args)=>{
     if(String(url)==='https://slack.com/api/auth.test')return Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'});
-    if(String(url)==='https://slack.com/api/conversations.info')return Response.json(membershipIssue?{ok:false,error:'missing_scope'}:{ok:true,channel:{id:'C123456',is_channel:true}});
-    if(String(url)==='https://slack.com/api/conversations.members')return Response.json({ok:true,members:['U123456']});
+    if(new URL(url).pathname==='/api/conversations.info')return Response.json(membershipIssue?{ok:false,error:'missing_scope'}:{ok:true,channel:{id:'C123456',is_channel:true}});
+    if(new URL(url).pathname==='/api/conversations.members')return Response.json({ok:true,members:['U123456']});
     return originalFetch(url,args);
   };
   t.after(()=>{globalThis.fetch=originalFetch;});

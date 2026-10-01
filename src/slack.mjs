@@ -4,10 +4,13 @@ export class Slack {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; this.sending = new Map(); this.lastSent = new Map(); }
   async call(method, body = {}, token = this.token) {
     if (!['auth.test', 'apps.connections.open', 'chat.postMessage', 'conversations.info', 'conversations.members'].includes(method)) throw Error('Unsupported Slack operation');
+    const reading = method.startsWith('conversations.');
+    const url = new URL(`https://slack.com/api/${method}`);
+    if (reading) url.search = new URLSearchParams(body).toString();
     let response;
-    try { response = await this.fetch(`https://slack.com/api/${method}`, {
-      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(15000),
+    try { response = await this.fetch(url.toString(), {
+      method: reading ? 'GET' : 'POST', headers: { authorization: `Bearer ${token}`, ...(!reading ? {'content-type':'application/json'} : {}) },
+      ...(!reading ? {body:JSON.stringify(body)} : {}), redirect: 'error', signal: AbortSignal.timeout(15000),
     }); } catch { throw Object.assign(Error('Slack transport unavailable'), { uncertain: method === 'chat.postMessage' }); }
     let data;
     try { data = await response.json(); } catch { throw Object.assign(Error('Invalid Slack response'), { uncertain: method === 'chat.postMessage' }); }
