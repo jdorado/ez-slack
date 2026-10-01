@@ -92,12 +92,19 @@ thread message; the plugin does not copy the channel transcript into them.
 
 ```text
 !ez help
+!ez status
 !ez ai
 !ez select PRESET_ID
 !ez model CLI MODEL EFFORT
 !ez new
 !ez stop
 ```
+
+`!ez status` reads this channel or thread's AI, conversation and live core state
+for its known pending runs, plus unresolved transport receipts. It starts no
+agent turn and does not include unrelated channels, threads or scheduled work.
+Unavailable runs remain explicitly unavailable after a core restart; status never
+replays an input or delivery.
 
 `!ez ai` reads core’s installed catalog and this channel or thread’s selection. Use those
 exact choices. Controls use core’s optimistic expected-session check and canonical

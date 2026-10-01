@@ -77,7 +77,7 @@ export class Channel {
     const [prefix, command = 'help', ...args] = input.text.trim().split(/\s+/);
     const place = input.threadTs === undefined ? 'channel' : 'thread';
     if (prefix !== '!ez') return 'Use !ez help for channel controls.';
-    if (command === 'help') return `!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this ${place}\n!ez stop — cancel this ${place}’s pending runs`;
+    if (command === 'help') return `!ez status — AI, conversation, work and delivery in this ${place}\n!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this ${place}\n!ez stop — cancel this ${place}’s pending runs`;
     if (command === 'stop') {
       if (args.length) throw Error('Use !ez stop');
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed);
@@ -86,6 +86,21 @@ export class Channel {
     }
     const path = `/v1/scope-control?scope=${encodeURIComponent(input.scope)}`;
     const controls = await this.core(path);
+    if (command === 'status' && !args.length) {
+      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.key !== input.key && (!r.closed || r.uncertain));
+      const runs = rows.filter(r => r.runId && !r.closed);
+      const results = await Promise.allSettled(runs.map(async r => {
+        const run = await this.core(`/v1/runs/${r.runId}`);
+        if (run?.id !== r.runId || run.scope !== input.scope || !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(run.status)) throw Error('Ez result identity mismatch');
+        return run.status;
+      }));
+      const count = status => results.filter(r => r.status === 'fulfilled' && r.value === status).length;
+      return [`This ${place}`,
+        `AI: ${presetText(selectedPreset(controls))}`,
+        `Conversation: ${controls.activeSessionId ?? 'new'}`,
+        `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
+        `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue).length} receipts need attention`].join('\n');
+    }
     if (command === 'ai' && !args.length) {
       return [`Current: ${presetText(selectedPreset(controls))}; conversation: ${controls.activeSessionId ?? 'new'}`,
         'Presets:', ...(controls.ai?.presets ?? []).map(p => `${p.id}: ${presetText(p)}`),

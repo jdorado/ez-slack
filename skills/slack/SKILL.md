@@ -25,9 +25,13 @@ verify one authorized human-message/native-reply exchange with a matching Slack
 channel/ts receipt. Setup permission is not arbitrary outbound-send authority.
 
 Invited dedicated channels each have a separate native scope; all their human
-members use this agent’s tool authority. Channel controls are `!ez help`, `!ez ai`,
-`!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`, `!ez new`, `!ez stop`.
+members use this agent’s tool authority. Channel controls are `!ez help`,
+`!ez status`, `!ez ai`, `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`,
+`!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
+`!ez status` reads scoped AI/session settings, live state of this adapter's known
+pending runs and unresolved transport receipts. It creates no turn or session;
+unavailable runs are reported without replay. It excludes unrelated scheduled work.
 Each thread has its own native scope keyed by the parent message timestamp;
 replies continue that thread’s session and are delivered inside it. Controls
 inside a thread affect only that thread. Ordinary channel messages keep the

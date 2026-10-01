@@ -118,6 +118,48 @@ test('channel-local model/effort controls use exact catalog and canonical readba
   assert(f.sends[0].text.includes('model-b / medium'));assert(f.sends[1].text.includes('model-a / low'));
   await f.agent.receive(event(3,'!ez model codex invented ultra'));assert.equal(f.calls.filter(c=>c.body?.action).length,1);
 });
+test('status reads live work and AI only in the requested channel or thread without mutations', async t => {
+  for (const root of [undefined, '1234567.111111']) {
+    const f=await fixture(t), scope=scopeFor(identity.teamId,'C123456',root);
+    f.settings.set(scope,{activeSessionId:'session-current',ai:{selectedId:'choice',presets:[{id:'choice',cli:'codex',model:'model-b',effort:'medium'}]}});
+    for (const [n,status] of [[1,'running'],[2,'queued'],[3,'completed']]) {
+      const id=`r_app_${String(n).padStart(64,'0')}`;
+      f.runs.set(id,{id,scope,status});
+      await f.receipts.change(`pending-${n}`,r=>Object.assign(r,{channel:'C123456',scope,runId:id,...(root === undefined ? {} : {threadTs:root})}));
+    }
+    for (const [key,otherScope] of [['other-channel',scopeFor(identity.teamId,'C654321')],['other-thread',scopeFor(identity.teamId,'C123456','1234567.222222')]]) {
+      await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',scope:otherScope,runId:'unrelated',uncertain:true}));
+    }
+    await f.agent.receive(event(10,'!ez status','C123456',root));
+    assert.match(f.sends[0].text,/AI: codex \/ model-b \/ medium\nConversation: session-current/);
+    assert.match(f.sends[0].text,/Work: 1 running; 1 queued; 1 finished awaiting delivery; 0 unavailable/);
+    assert.match(f.sends[0].text,/Transport: 0 unconfirmed inputs; 0 receipts need attention/);
+    assert.equal(f.sends[0].threadTs,root);
+    assert.equal(f.calls.length,4);assert(f.calls.every(c=>c.body === undefined));
+    assert(!f.calls.some(c=>c.path.includes('unrelated')));
+    const persisted=await readFile(join(f.directory,'receipts.json'),'utf8');
+    assert(!persisted.includes('"status"')&&!persisted.includes('session-current')&&!persisted.includes('model-b'));
+  }
+});
+test('status exposes unavailable or mismatched runs and uncertain input without retrying', async t => {
+  const f=await fixture(t), scope=scopeFor(identity.teamId,'C123456');
+  for (const [key,id] of [['missing','missing-run'],['mismatch','foreign-run']]) await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',scope,runId:id}));
+  f.runs.set('foreign-run',{id:'foreign-run',scope:scopeFor(identity.teamId,'C654321'),status:'running'});
+  await f.receipts.change('uncertain',r=>Object.assign(r,{channel:'C123456',scope,uncertain:true,issue:'admission_unconfirmed'}));
+  await f.agent.receive(event(10,'!ez status'));
+  assert.match(f.sends[0].text,/0 running; 0 queued; 0 finished awaiting delivery; 2 unavailable/);
+  assert.match(f.sends[0].text,/1 unconfirmed inputs; 1 receipts need attention/);
+  assert(f.calls.every(c=>c.body === undefined));assert.equal(f.settings.size,0);
+  assert.equal((await f.receipts.load()).find(r=>r.key==='uncertain').uncertain,true);
+});
+test('status in an unused channel creates no native conversation and help lists it', async t => {
+  const f=await fixture(t);
+  await f.agent.receive(event(1,'!ez status'));await f.agent.receive(event(2,'!ez help'));
+  assert.match(f.sends[0].text,/Conversation: new/);
+  assert.match(f.sends[0].text,/0 running; 0 queued; 0 finished awaiting delivery; 0 unavailable/);
+  assert.match(f.sends[1].text,/!ez status/);
+  assert.equal(f.calls.length,1);assert.equal(f.settings.size,0);assert.equal(f.runs.size,0);
+});
 test('thread controls change only that thread, render there, and cancel only its pending runs', async t => {
   const f=await fixture(t), a='1234567.111111', b='1234567.222222';
   await f.agent.receive(event(1,'!ez model codex model-b medium','C123456',a));
