@@ -87,7 +87,8 @@ export class Channel {
     const path = `/v1/scope-control?scope=${encodeURIComponent(input.scope)}`;
     const controls = await this.core(path);
     if (command === 'status' && !args.length) {
-      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.key !== input.key && (!r.closed || r.uncertain));
+      const unresolvedSend = r => r.sends.some(s => ['uncertain', 'rejected'].includes(s.state));
+      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.key !== input.key && (!r.closed || r.uncertain || unresolvedSend(r)));
       const runs = rows.filter(r => r.runId && !r.closed);
       const results = await Promise.allSettled(runs.map(async r => {
         const run = await this.core(`/v1/runs/${r.runId}`);
@@ -99,7 +100,7 @@ export class Channel {
         `AI: ${presetText(selectedPreset(controls))}`,
         `Conversation: ${controls.activeSessionId ?? 'new'}`,
         `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
-        `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue).length} receipts need attention`].join('\n');
+        `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue || unresolvedSend(r)).length} receipts need attention`].join('\n');
     }
     if (command === 'ai' && !args.length) {
       return [`Current: ${presetText(selectedPreset(controls))}; conversation: ${controls.activeSessionId ?? 'new'}`,

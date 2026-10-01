@@ -146,9 +146,12 @@ test('status exposes unavailable or mismatched runs and uncertain input without 
   for (const [key,id] of [['missing','missing-run'],['mismatch','foreign-run']]) await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',scope,runId:id}));
   f.runs.set('foreign-run',{id:'foreign-run',scope:scopeFor(identity.teamId,'C654321'),status:'running'});
   await f.receipts.change('uncertain',r=>Object.assign(r,{channel:'C123456',scope,uncertain:true,issue:'admission_unconfirmed'}));
+  for (const [key,state,closed] of [['interrupted-control','uncertain',false],['rejected-control','rejected',true]]) {
+    await f.receipts.change(key,r=>{Object.assign(r,{channel:'C123456',scope,closed});r.sends.push({key:'control:0',state});});
+  }
   await f.agent.receive(event(10,'!ez status'));
   assert.match(f.sends[0].text,/0 running; 0 queued; 0 finished awaiting delivery; 2 unavailable/);
-  assert.match(f.sends[0].text,/1 unconfirmed inputs; 1 receipts need attention/);
+  assert.match(f.sends[0].text,/1 unconfirmed inputs; 3 receipts need attention/);
   assert(f.calls.every(c=>c.body === undefined));assert.equal(f.settings.size,0);
   assert.equal((await f.receipts.load()).find(r=>r.key==='uncertain').uncertain,true);
 });
