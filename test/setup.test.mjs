@@ -79,6 +79,7 @@ test('slash membership requires an invited non-DM channel and an actual human me
   const s=new Slack('synthetic',async(url,args)=>{
     const body=JSON.parse(args.body);requests.push({url,body});
     if(url.endsWith('/conversations.info'))return Response.json({ok:true,channel:{id:body.channel,is_channel:true,is_archived:false,is_im:false,is_mpim:false}});
+    if (!(body.limit > 0 && body.limit < 1000)) return Response.json({ok:false,error:'invalid_arguments'});
     return Response.json({ok:true,members:body.cursor?['U123456']:['U999999'],response_metadata:{next_cursor:body.cursor?'':'next'}});
   });
   assert.equal(await s.channelMember('C123456','U123456','U999999'),true);assert.equal(requests.length,3);

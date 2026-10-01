@@ -24,7 +24,7 @@ export class Slack {
     const missing = new Set([user,bot]);
     let cursor;
     do {
-      const page = await this.call('conversations.members', {channel, limit:1000, ...(cursor ? {cursor} : {})});
+      const page = await this.call('conversations.members', {channel, limit:200, ...(cursor ? {cursor} : {})});
       if (!Array.isArray(page.members)) throw Error('Invalid Slack membership response');
       for (const member of page.members) missing.delete(member);
       if (!missing.size) return true;
