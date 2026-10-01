@@ -85,7 +85,10 @@ owner or bypass core authority. Use HTTPS outside a trusted private network.
 ez tools serve 18878:8788 slack setup --team T_WORKSPACE_ID --name annie
 ```
 
-Open `http://127.0.0.1:18878`. The local form links the prepared app manifest.
+Open `http://127.0.0.1:18878`. The local form links the generated app manifest,
+including native controls and their permissions by default. One plugin-owned
+command list generates registration hints and help; there is no per-channel
+command setup. The app name determines its native command (`annie` → `/ez-annie`).
 Create an app from that manifest in the chosen workspace, install it, generate
 an app-level token with `connections:write`, and enter the App ID plus bot/app
 tokens in the password fields. The server verifies the bot’s workspace/user and
@@ -98,6 +101,11 @@ with a different workspace/app. Never put token values in command arguments.
 Tokens are stored mode 0600 in the private plugin volume and never returned.
 The setup form requires same-origin requests and a per-process CSRF token.
 Stop the temporary setup command after onboarding.
+
+`ez slack manifest --name NAME` returns the same generated manifest without
+credentials or a running setup server. To upgrade an existing Slack app, update
+its manifest with the generated controls/scopes and reinstall when Slack requests
+new permissions. Linking new apps from this manifest includes them immediately.
 
 ```sh
 ez plugins stop slack
@@ -119,14 +127,35 @@ thread message; the plugin does not copy the channel transcript into them.
 
 ## Channel controls
 
+After linking, type the generated command (for example `/ez-annie`) for its native
+Slack menu. Append `status`, `ai`, `select PRESET_ID`,
+`model CLI MODEL [EFFORT]`, `new` or `stop` in the channel.
+The bot and caller must both be members of that public/private channel.
+Membership is checked before core controls; slash commands never start an AI
+turn or grant broader authority.
+
+Slack routes duplicate slash command names to the most recently installed app.
+Setup automatically derives distinct names such as `/ez-annie` or `/ez-stocks`
+from each agent app's name. Use distinct app names in a shared workspace.
+The plugin accepts `/ez` and `/ez-NAME` delivered to its pinned app identity
+and uses that name in replies. Custom slash commands cannot
+run inside threads. Message controls also work:
+
 ```text
 !ez help
+!ez status
 !ez ai
 !ez select PRESET_ID
 !ez model CLI MODEL EFFORT
 !ez new
 !ez stop
 ```
+
+`!ez status` reads this channel or thread's AI, conversation and live core state
+for its known pending runs, plus unresolved transport receipts. It starts no
+agent turn and does not include unrelated channels, threads or scheduled work.
+Unavailable runs remain explicitly unavailable after a core restart; status never
+replays an input or delivery.
 
 `!ez ai` reads core’s installed catalog and this channel or thread’s selection. Use those
 exact choices. Controls use core’s optimistic expected-session check and canonical
@@ -140,6 +169,7 @@ Read the same canonical settings through the installed plugin:
 
 ```sh
 ez slack settings --channel C_CHANNEL_ID
+ez slack doctor --json --channel C_CHANNEL_ID
 ez slack settings --channel C_CHANNEL_ID --thread PARENT_MESSAGE_TS
 ez slack receipts
 ez slack receipts --key T_WORKSPACE_ID:Ev_EVENT_ID
@@ -147,7 +177,10 @@ ez slack receipts --key T_WORKSPACE_ID:Ev_EVENT_ID
 
 Exit codes: 0 success, 1 invalid/unavailable operation, 2 doctor not connected.
 `health` proves service availability, not Slack/native delivery. `doctor` is
-read-only and verifies the Slack identity and current Ez registration. Completion
+read-only and verifies the Slack identity and current Ez registration. Its optional
+`--channel` checks the bot against the actual channel member list, reporting a
+provider error code if unavailable; exit 2 also covers unconfirmed membership.
+Slash admission checks both caller and bot in that list. Completion
 requires real inbound admission, native reply, matching channel plus Slack `ts`
 receipt. Slack acceptance does not prove a person read the message.
 

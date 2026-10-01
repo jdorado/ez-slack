@@ -6,7 +6,6 @@ RUN corepack enable && corepack prepare pnpm@10.30.3 --activate && pnpm install 
 COPY --chown=node:node bin ./bin
 COPY --chown=node:node src ./src
 COPY --chown=node:node web ./web
-COPY --chown=node:node slack-app-manifest.json ./
 FROM base AS test
 COPY test ./test
 RUN node --test test/*.test.mjs

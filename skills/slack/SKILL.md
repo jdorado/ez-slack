@@ -8,6 +8,8 @@ is the agent-facing Slack execution surface; do not use scripts, raw Slack APIs,
 provider credentials, direct core requests or host state as a substitute.
 
 `ez slack doctor --json` reads authenticated Slack identity and core registration.
+Add `--channel C_ID` to check bot membership and provider access errors (read-only;
+exit 2 for unconfirmed membership). Slash admission verifies both bot and caller.
 `ez slack settings --channel C_ID` reads that channel’s canonical settings.
 Add `--thread PARENT_TS` to read a thread’s separate native session and settings.
 `ez slack receipts [--key TEAM:EVENT]` reads transport pointers and send receipts.
@@ -17,7 +19,10 @@ For onboarding, the installation operator must already have registered a private
 core application binding and an approved network. The operator passes the binding
 connection through `slack configure` JSON stdin. Run the loopback-only setup via
 `ez tools serve 18878:8788 slack setup --team T_ID --name NAME`; the human enters
-Slack tokens in that local password form. An authorized installation operator
+Slack tokens in that local password form. Setup's generated app manifest includes
+native controls by default; `slack manifest --name NAME` returns the same manifest
+offline. Existing apps need their manifest updated and Slack-requested reinstall.
+An authorized installation operator
 can use `slack configure-slack` with private JSON stdin: `teamId`, `appId`,
 `botToken`, `appToken`; it returns only verified identity, never credentials. Never request/store/repeat tokens in
 chat. After saving, stop the setup command, restart the plugin, run doctor, and
@@ -25,9 +30,19 @@ verify one authorized human-message/native-reply exchange with a matching Slack
 channel/ts receipt. Setup permission is not arbitrary outbound-send authority.
 
 Invited dedicated channels each have a separate native scope; all their human
-members use this agent’s tool authority. Channel controls are `!ez help`, `!ez ai`,
-`!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`, `!ez new`, `!ez stop`.
+members use this agent’s tool authority. Channel controls are `!ez help`,
+`!ez status`, `!ez ai`, `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`,
+`!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
+Native Slack controls use the generated app-specific prefix, for example
+`/ez-annie`, followed by the same controls and arguments. The prefix alone shows
+help. Setup derives it from NAME; no channel-specific registration is needed.
+Both caller and bot must be channel members. Slash commands never enter the
+engine. Use distinct app names because Slack gives duplicate command names to
+the most recently installed app. Use message controls in threads.
+`!ez status` reads scoped AI/session settings, live state of this adapter's known
+pending runs and unresolved transport receipts. It creates no turn or session;
+unavailable runs are reported without replay. It excludes unrelated scheduled work.
 Each thread has its own native scope keyed by the parent message timestamp;
 replies continue that thread’s session and are delivered inside it. Controls
 inside a thread affect only that thread. Ordinary channel messages keep the

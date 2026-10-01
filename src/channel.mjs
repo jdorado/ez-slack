@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
+import { controls as controlCommands, controlHelp } from './commands.mjs';
 
 export const validThreadTs = value => typeof value === 'string' && /^\d{1,20}\.\d{1,20}$/.test(value);
 export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${threadTs === undefined ? '' : `:thread:${threadTs}`}`;
@@ -15,6 +16,16 @@ export function incoming(payload, identity) {
   return { key: `${payload.team_id}:${payload.event_id}`, requestId: `${payload.team_id}:${payload.event_id}`, channel: e.channel,
     scope: scopeFor(payload.team_id, e.channel, e.thread_ts), ...(e.thread_ts === undefined ? {} : {threadTs: e.thread_ts}),
     text: e.text, inputHash: hash(e.text) };
+}
+export function slashIncoming(payload, identity) {
+  if (!/^\/ez(?:-[a-z0-9_-]{1,32})?$/.test(payload?.command ?? '') || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
+      !/^[UW][A-Z0-9]{5,40}$/.test(payload.user_id ?? '') || payload.user_id === identity.botUserId ||
+      !/^[CG][A-Z0-9]{5,40}$/.test(payload.channel_id ?? '') || typeof payload.text !== 'string' || payload.text.length > 15996 ||
+      typeof payload.trigger_id !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(payload.trigger_id)) return null;
+  const key = `${payload.team_id}:slash:${hash(payload.trigger_id).slice(0,32)}`;
+  const text = `!ez ${payload.text.trim()}`;
+  return { key, requestId: key, channel: payload.channel_id, scope: scopeFor(payload.team_id, payload.channel_id),
+    user: payload.user_id, text, nativeControl: payload.command, inputHash: hash(JSON.stringify([payload.channel_id, payload.user_id, payload.command, text])) };
 }
 export function chunks(text) {
   const result = []; let part = '';
@@ -33,6 +44,14 @@ export class Channel {
   async receive(payload, ack = async () => {}) {
     const input = incoming(payload, this.identity);
     if (!input) { await ack(); return { ignored: true }; }
+    return this.receiveInput(input, ack);
+  }
+  async receiveSlash(payload, ack = async () => {}) {
+    const input = slashIncoming(payload, this.identity);
+    if (!input) { await ack(); return { ignored: true }; }
+    return this.receiveInput(input, () => ack({response_type:'ephemeral',text:'Ez command received. Results appear here only if you and this agent bot are channel members.'}));
+  }
+  async receiveInput(input, ack) {
     // A concurrent envelope must remain unacknowledged until input is durable.
     // Slack can replay it after the first admission records its receipt.
     if (this.accepting.has(input.key)) return { duplicate: true };
@@ -49,11 +68,19 @@ export class Channel {
       // Slack may replay it; the receipt prevents a second native admission.
       await ack().catch(() => {});
       if (duplicate) { if (receipt.runId && !receipt.closed) this.watch(receipt); return { duplicate: true }; }
+      if (input.nativeControl) {
+        try { if (!await this.slack.channelMember(input.channel, input.user, this.identity.botUserId)) throw Error('Channel not authorized'); }
+        catch (e) {
+          await this.receipts.change(input.key, r => { r.issue = 'channel_access_unconfirmed'; if (/^[a-z_]{1,80}$/.test(e.providerCode ?? '')) r.providerIssue = e.providerCode; r.closed = true; });
+          return { ignored: true };
+        }
+      }
       if (input.text.trim().startsWith('!ez')) {
         // Control mutations are deliberate, once-only UI operations; never replay after uncertainty.
         let text;
         try { text = await this.control(input); }
         catch { await this.receipts.change(input.key, r => { r.issue = 'control_unconfirmed'; }); text = 'Control was not confirmed. Use !ez ai to read the current settings before trying another change.'; }
+        if (input.nativeControl) text = text.replaceAll('!ez', input.nativeControl);
         await this.deliver(receipt, 'control', text);
         await this.receipts.change(input.key, r => { r.closed = true; });
       } else {
@@ -77,7 +104,9 @@ export class Channel {
     const [prefix, command = 'help', ...args] = input.text.trim().split(/\s+/);
     const place = input.threadTs === undefined ? 'channel' : 'thread';
     if (prefix !== '!ez') return 'Use !ez help for channel controls.';
-    if (command === 'help') return `!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this ${place}\n!ez stop — cancel this ${place}’s pending runs`;
+    const spec = controlCommands.find(c => c.name === command);
+    if (!spec || !spec.counts.includes(args.length)) return 'Unknown control. Use !ez help.';
+    if (command === 'help') return controlHelp();
     if (command === 'stop') {
       if (args.length) throw Error('Use !ez stop');
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed);
@@ -86,6 +115,22 @@ export class Channel {
     }
     const path = `/v1/scope-control?scope=${encodeURIComponent(input.scope)}`;
     const controls = await this.core(path);
+    if (command === 'status' && !args.length) {
+      const unresolvedSend = r => r.sends.some(s => ['uncertain', 'rejected'].includes(s.state));
+      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.key !== input.key && (!r.closed || r.uncertain || unresolvedSend(r)));
+      const runs = rows.filter(r => r.runId && !r.closed);
+      const results = await Promise.allSettled(runs.map(async r => {
+        const run = await this.core(`/v1/runs/${r.runId}`);
+        if (run?.id !== r.runId || run.scope !== input.scope || !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(run.status)) throw Error('Ez result identity mismatch');
+        return run.status;
+      }));
+      const count = status => results.filter(r => r.status === 'fulfilled' && r.value === status).length;
+      return [`This ${place}`,
+        `AI: ${presetText(selectedPreset(controls))}`,
+        `Conversation: ${controls.activeSessionId ?? 'new'}`,
+        `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
+        `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue || unresolvedSend(r)).length} receipts need attention`].join('\n');
+    }
     if (command === 'ai' && !args.length) {
       return [`Current: ${presetText(selectedPreset(controls))}; conversation: ${controls.activeSessionId ?? 'new'}`,
         'Presets:', ...(controls.ai?.presets ?? []).map(p => `${p.id}: ${presetText(p)}`),
