@@ -2,16 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
 
-export const scopeFor = (team, channel) => `slack:${team}:${channel}`;
+export const validThreadTs = value => typeof value === 'string' && /^\d{1,20}\.\d{1,20}$/.test(value);
+export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${threadTs === undefined ? '' : `:thread:${threadTs}`}`;
 export function incoming(payload, identity) {
   const e = payload?.event;
   if (payload?.type !== 'event_callback' || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
       !/^Ev[A-Za-z0-9]{5,80}$/.test(payload.event_id ?? '') || e?.type !== 'message' || e.subtype || e.bot_id ||
       !/^[UW][A-Z0-9]{5,40}$/.test(e.user ?? '') || e.user === identity.botUserId ||
       !/^[CG][A-Z0-9]{5,40}$/.test(e.channel ?? '') || !['channel', 'group'].includes(e.channel_type) ||
-      typeof e.text !== 'string' || !e.text.trim() || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '')) return null;
+      typeof e.text !== 'string' || !e.text.trim() || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '') ||
+      (e.thread_ts !== undefined && !validThreadTs(e.thread_ts))) return null;
   return { key: `${payload.team_id}:${payload.event_id}`, requestId: `${payload.team_id}:${payload.event_id}`, channel: e.channel,
-    scope: scopeFor(payload.team_id, e.channel), text: e.text, inputHash: hash(e.text) };
+    scope: scopeFor(payload.team_id, e.channel, e.thread_ts), ...(e.thread_ts === undefined ? {} : {threadTs: e.thread_ts}),
+    text: e.text, inputHash: hash(e.text) };
 }
 export function chunks(text) {
   const result = []; let part = '';
@@ -37,8 +40,10 @@ export class Channel {
     try {
       let duplicate = false;
       const receipt = await this.receipts.change(input.key, r => {
-        if (r.channel) { if (r.inputHash !== input.inputHash || r.channel !== input.channel) throw Error('Slack event ID reused'); duplicate = true; return; }
-        Object.assign(r, { channel: input.channel, scope: input.scope, requestId: input.requestId, inputHash: input.inputHash });
+        if (r.channel) { if (r.inputHash !== input.inputHash || r.channel !== input.channel ||
+          (r.threadTs !== undefined && r.threadTs !== input.threadTs)) throw Error('Slack event ID reused'); duplicate = true; return; }
+        Object.assign(r, { channel: input.channel, scope: input.scope, requestId: input.requestId, inputHash: input.inputHash,
+          ...(input.threadTs === undefined ? {} : {threadTs: input.threadTs}) });
       });
       // A failed provider acknowledgement cannot discard already recorded input.
       // Slack may replay it; the receipt prevents a second native admission.
@@ -70,13 +75,14 @@ export class Channel {
   }
   async control(input) {
     const [prefix, command = 'help', ...args] = input.text.trim().split(/\s+/);
+    const place = input.threadTs === undefined ? 'channel' : 'thread';
     if (prefix !== '!ez') return 'Use !ez help for channel controls.';
-    if (command === 'help') return '!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this channel\n!ez stop — cancel this channel’s pending runs';
+    if (command === 'help') return `!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this ${place}\n!ez stop — cancel this ${place}’s pending runs`;
     if (command === 'stop') {
       if (args.length) throw Error('Use !ez stop');
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed);
       for (const r of rows) await this.core(`/v1/runs/${r.runId}/cancel`, {});
-      return `Cancellation requested for ${rows.length} run(s) in this channel.`;
+      return `Cancellation requested for ${rows.length} run(s) in this ${place}.`;
     }
     const path = `/v1/scope-control?scope=${encodeURIComponent(input.scope)}`;
     const controls = await this.core(path);
@@ -95,7 +101,7 @@ export class Channel {
     } else return 'Unknown control. Use !ez help.';
     await this.core(path, { ...action, expectedSession: controls.activeSessionId });
     const readback = await this.core(path);
-    return `This channel: ${presetText(selectedPreset(readback))}; conversation: ${readback.activeSessionId}`;
+    return `This ${place}: ${presetText(selectedPreset(readback))}; conversation: ${readback.activeSessionId}`;
   }
   async deliver(receipt, messageId, text) {
     const parts = chunks(text);
@@ -109,7 +115,7 @@ export class Channel {
       const pending = saved.sends.find(s => s.key === key);
       if (!dispatch) { if (pending.state !== 'accepted') throw Error('Slack delivery unconfirmed; not resent'); continue; }
       try {
-        const sent = await this.slack.send(receipt.channel, parts[i], pending.clientId);
+        const sent = await this.slack.send(receipt.channel, parts[i], pending.clientId, receipt.threadTs);
         await this.receipts.change(receipt.key, r => { Object.assign(r.sends.find(s => s.key === key), sent); });
       } catch (e) {
         await this.receipts.change(receipt.key, r => { r.uncertain = Boolean(e.uncertain); r.issue = e.uncertain ? 'slack_delivery_unconfirmed' : 'slack_delivery_rejected'; r.sends.find(s => s.key === key).state = e.uncertain ? 'uncertain' : 'rejected'; });
