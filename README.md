@@ -56,6 +56,11 @@ Create an app from that manifest in the chosen workspace, install it, generate
 an app-level token with `connections:write`, and enter the App ID plus bot/app
 tokens in the password fields. The server verifies the bot’s workspace/user and
 app-token validity; Socket events must also match the configured app/workspace.
+An installation operator can instead pass the same credentials privately to
+`ez slack configure-slack` as JSON stdin (`teamId`, `appId`, `botToken`,
+`appToken`). Both paths verify the live identity and refuse replacing a profile
+with a different workspace/app. Never put token values in command arguments.
+
 Tokens are stored mode 0600 in the private plugin volume and never returned.
 The setup form requires same-origin requests and a per-process CSRF token.
 Stop the temporary setup command after onboarding.

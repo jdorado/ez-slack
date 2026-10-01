@@ -16,7 +16,9 @@ For onboarding, the installation operator must already have registered a private
 core application binding and an approved network. The operator passes the binding
 connection through `slack configure` JSON stdin. Run the loopback-only setup via
 `ez tools serve 18878:8788 slack setup --team T_ID --name NAME`; the human enters
-Slack tokens in that local password form. Never request/store/repeat tokens in
+Slack tokens in that local password form. An authorized installation operator
+can use `slack configure-slack` with private JSON stdin: `teamId`, `appId`,
+`botToken`, `appToken`; it returns only verified identity, never credentials. Never request/store/repeat tokens in
 chat. After saving, stop the setup command, restart the plugin, run doctor, and
 verify one authorized human-message/native-reply exchange with a matching Slack
 channel/ts receipt. Setup permission is not arbitrary outbound-send authority.

@@ -23,10 +23,14 @@ test('credentials validate scheme, fields, workspace and authenticated bot ident
   const result=await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:'T123456',user_id:'U123456',bot_id:'B123456'}:{url:'wss://private-token'}});
   assert.equal(result.botUserId,'U123456');assert(!JSON.stringify(result).includes('synthetic-private'));
   assert.equal((await stat(join(d,'slack.json'))).mode&0o777,0o600);
+  let providerCalled = false;
+  await assert.rejects(saveSlack(d,{...config,appId:'A654321'},{call:async()=>{providerCalled=true;}}),/different Slack app/);
+  assert.equal(providerCalled,false);
+  assert.equal(JSON.parse(await readFile(join(d,'slack.json'))).appId,config.appId);
 });
-test('malformed credential input never exposes JSON excerpts to CLI output',async()=>{
+for (const command of ['configure','configure-slack']) test(`${command}: malformed credential input never exposes JSON excerpts`,async()=>{
   const result=await new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,[new URL('../bin/ez-slack.mjs',import.meta.url).pathname,'configure'],{stdio:['pipe','pipe','pipe']});let output='';
+    const child=spawn(process.execPath,[new URL('../bin/ez-slack.mjs',import.meta.url).pathname,command],{stdio:['pipe','pipe','pipe']});let output='';
     child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>output+=c);child.on('error',reject);child.on('close',code=>resolve({code,output}));child.stdin.end('{"token":SYNTHETIC_PRIVATE_TOKEN}');
   });
   assert.equal(result.code,1);assert(result.output.includes('Invalid JSON input'));assert(!result.output.includes('SYNTHETIC'));

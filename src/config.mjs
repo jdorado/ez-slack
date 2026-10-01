@@ -22,6 +22,9 @@ export async function saveConnection(directory, c) { await atomic(join(directory
 export async function slackConfig(directory) { return validateSlack(await read(join(directory, 'slack.json'))); }
 export async function saveSlack(directory, input, slack) {
   const c = validateSlack(input);
+  let old;
+  try { old = await slackConfig(directory); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  if (old && (old.teamId !== c.teamId || old.appId !== c.appId)) throw Error('Existing profile belongs to a different Slack app; use a separate agent');
   const identity = await slack.call('auth.test', {}, c.botToken);
   if (identity.team_id !== c.teamId || !identity.bot_id || !id(identity.user_id, '[UW]')) throw Error('Slack bot belongs to a different workspace or is not a bot');
   // Validate the app-level token without retaining or exposing its temporary WebSocket URL.

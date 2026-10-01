@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { saveSlack, connection, slackConfig } from './config.mjs';
+import { saveSlack, connection } from './config.mjs';
 import { Slack } from './slack.mjs';
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 
@@ -26,9 +26,6 @@ export async function setup(directory, { port = 8788, teamId = '', name = 'Ez Ag
       const supplied = Buffer.from(form.get('csrf') ?? '');
       if (supplied.length !== csrf.length || !timingSafeEqual(supplied, Buffer.from(csrf))) throw Error('Invalid setup form');
       const input = { teamId, appId: form.get('appId'), appToken: form.get('appToken'), botToken: form.get('botToken') };
-      let old;
-      try { old = await slackConfig(directory); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      if (old && (old.teamId !== input.teamId || old.appId !== input.appId)) throw Error('Existing profile belongs to a different Slack app; use a separate agent');
       await saveSlack(directory, input, slack);
       send(200, 'text/html', '<!doctype html><title>Slack credentials saved</title><h1>Credentials saved</h1><p>Restart the Slack plugin, invite the bot to your channel, then send a message. Credentials were stored privately and are never returned by this page.</p>');
     } catch { send(400, 'text/plain', 'Setup was not completed. Check the app ID, both tokens, workspace and Ez connection. Credentials are never echoed.'); }
