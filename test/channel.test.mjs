@@ -52,12 +52,31 @@ test('stable event deduplication, two distinct scopes, provider receipts and res
   await Promise.all([f.agent.receive(event(1),async()=>acks++),f.agent.receive(event(1),async()=>acks++)]);
   await f.agent.receive(event(2,'Second','C654321'));
   await settled(f.agent);
-  assert.equal(acks,2);assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,2);assert.equal(f.sends.length,2);
+  assert.equal(acks,1);assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,2);assert.equal(f.sends.length,2);
   assert.deepEqual(f.calls.filter(c=>c.path==='/v1/runs').map(c=>c.body.scope),['slack:T123456:C123456','slack:T123456:C654321']);
   const rows=await f.receipts.load();assert(rows.every(r=>r.closed && r.sends[0].state==='accepted'));
   const stored=await readFile(join(f.directory,'receipts.json'),'utf8');assert(!stored.includes('Reply to')&&!stored.includes('"status"'));
   f.agent.close();const resumed=new Channel({identity,receipts:f.receipts,slack:{send:()=>{throw Error('Duplicate send');}},call:()=>{throw Error('Duplicate turn');}});
   t.after(()=>resumed.close());await resumed.resumeDelivery();await resumed.receive(event(1));assert.equal(resumed.watching.size,0);
+});
+test('a concurrent duplicate is not acknowledged before durable input, including a failed write', async t => {
+  const f=await fixture(t);let acks=0,writing;
+  const started=new Promise(resolve=>writing=resolve);
+  let rejectWrite;
+  const blocked=new Promise((_,reject)=>rejectWrite=reject);
+  const change=f.receipts.change.bind(f.receipts);let first=true;
+  f.receipts.change=async(...args)=>{if(first){first=false;writing();await blocked;}return change(...args);};
+  const original=f.agent.receive(event(),async()=>acks++);
+  const failed=assert.rejects(original,/Synthetic storage failure/);
+  await started;
+  const duplicate=await f.agent.receive(event(),async()=>acks++);
+  assert.equal(duplicate.duplicate,true);assert.equal(acks,0);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
+  rejectWrite(Error('Synthetic storage failure'));await failed;
+  assert.equal(acks,0);
+  await f.agent.receive(event(),async()=>acks++);await settled(f.agent);
+  assert.equal(acks,1);assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,1);
+  assert.equal(f.sends.length,1);assert.equal((await f.receipts.load())[0].closed,true);
 });
 test('channel-local model/effort controls use exact catalog and canonical readback', async t => {
   const f=await fixture(t);

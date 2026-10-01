@@ -1,6 +1,6 @@
 # Ez Slack
 
-A private Slack channel plugin for an existing Ez agent. Install one Slack app
+A Slack channel plugin for an existing Ez agent. Install one Slack app
 per independent agent; invite its bot into several dedicated channels. Each
 workspace/channel pair uses an Ez private scope with its own native session and
 model/effort. Channels of one agent share its filesystem and tools. Separate
@@ -16,9 +16,13 @@ to render replies. Provider reconnect is handled by Slack’s official SDK.
 Node 22+, Docker, Ez core with private scope controls (published beta.42 client;
 per-conversation model continuity fixes must be installed on the agent), an
 authorized owner, and a Slack workspace where you can install custom apps.
-This plugin is local/private and not published or catalog-listed.
+The source is public. Install an inspected revision locally; the npm package is
+not published or catalog-listed. GitHub visibility does not establish package
+publication or Slack Marketplace availability.
 
-Build from reviewed source in this repository:
+Use a reviewed commit from this repository as the source. Clone it into one
+canonical checkout, then inspect and install through the owning agent's bound
+launcher from that agent's workspace. Developer checks run in the source checkout:
 
 ```sh
 pnpm install --frozen-lockfile
