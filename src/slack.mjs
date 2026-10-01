@@ -3,7 +3,7 @@ import { validThreadTs } from './channel.mjs';
 export class Slack {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; this.sending = new Map(); this.lastSent = new Map(); }
   async call(method, body = {}, token = this.token) {
-    if (!['auth.test', 'apps.connections.open', 'chat.postMessage'].includes(method)) throw Error('Unsupported Slack operation');
+    if (!['auth.test', 'apps.connections.open', 'chat.postMessage', 'conversations.info', 'conversations.members'].includes(method)) throw Error('Unsupported Slack operation');
     let response;
     try { response = await this.fetch(`https://slack.com/api/${method}`, {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -16,6 +16,18 @@ export class Slack {
       throw Object.assign(Error(`Slack: ${code}`), { uncertain: method === 'chat.postMessage' && (response.status >= 500 || response.status === 408 || !data.error) });
     }
     return data;
+  }
+  async channelMember(channel, user) {
+    const info = await this.call('conversations.info', {channel});
+    if (info.channel?.id !== channel || info.channel.is_member !== true || info.channel.is_archived || info.channel.is_im || info.channel.is_mpim) return false;
+    let cursor;
+    do {
+      const page = await this.call('conversations.members', {channel, limit:1000, ...(cursor ? {cursor} : {})});
+      if (!Array.isArray(page.members)) throw Error('Invalid Slack membership response');
+      if (page.members.includes(user)) return true;
+      cursor = page.response_metadata?.next_cursor;
+    } while (cursor);
+    return false;
   }
   async send(channel, text, key, threadTs) {
     if (threadTs !== undefined && !validThreadTs(threadTs)) throw Error('Invalid Slack thread timestamp');

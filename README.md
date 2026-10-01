@@ -90,6 +90,21 @@ thread message; the plugin does not copy the channel transcript into them.
 
 ## Channel controls
 
+With the app's slash command enabled, type `/ez` for its native Slack command
+menu, then `/ez status`, `/ez ai`, `/ez select PRESET_ID`,
+`/ez model CLI MODEL [EFFORT]`, `/ez new` or `/ez stop` in the channel.
+The bot and caller must both be members of that public/private channel.
+Enable the manifest's `commands`, `channels:read` and `groups:read` scopes and
+reinstall the Slack app after updating it. Membership is checked before core
+controls; slash commands never start an AI turn or grant broader authority.
+
+Slack routes duplicate slash command names to the most recently installed app.
+Enable `/ez` on only one agent app per workspace; give other agent apps distinct
+registered names such as `/ez-annie` or `/ez-stocks` in their app manifests.
+The plugin accepts `/ez` and `/ez-NAME` delivered to its pinned app identity
+and uses that name in replies. Custom slash commands cannot
+run inside threads. Existing message controls work without slash registration:
+
 ```text
 !ez help
 !ez status

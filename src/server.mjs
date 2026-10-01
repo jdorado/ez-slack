@@ -33,7 +33,10 @@ export async function serve(directory, { createSocket = options => new SocketMod
       socket.on('connected', () => { connected = true; issue = null; });
       socket.on('disconnected', () => { connected = false; });
       socket.on('error', () => { issue = 'socket_unavailable'; connected = false; });
-      socket.on('slack_event', ({ body, ack }) => { void channel.receive(body, ack).catch(() => { issue = 'channel_operation_failed'; }); });
+      socket.on('slack_event', ({ body, ack, type }) => {
+        const work = type === 'slash_commands' ? channel.receiveSlash(body, ack) : channel.receive(body, ack);
+        void work.catch(() => { issue = 'channel_operation_failed'; });
+      });
       await socket.start();
       await channel.resumeDelivery();
     } catch (e) { issue = e.code === 'ENOENT' ? 'setup_required' : 'connection_unavailable'; }

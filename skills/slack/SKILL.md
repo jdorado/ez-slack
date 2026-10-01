@@ -29,6 +29,13 @@ members use this agent’s tool authority. Channel controls are `!ez help`,
 `!ez status`, `!ez ai`, `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`,
 `!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
+Native Slack controls use `/ez` (menu), `/ez status`, `/ez ai`, `/ez select`,
+`/ez model`, `/ez new` and `/ez stop`, with the same arguments. Both caller and
+bot must be channel members. Slash commands never enter the engine. Enable
+`/ez` on only one agent app in a workspace; register `/ez-NAME` (lowercase,
+up to 32 letters/digits/hyphens/underscores) for other agent apps. The same
+controls use the registered prefix. Slack gives duplicate names to the most
+recently installed app. Use message controls in threads.
 `!ez status` reads scoped AI/session settings, live state of this adapter's known
 pending runs and unresolved transport receipts. It creates no turn or session;
 unavailable runs are reported without replay. It excludes unrelated scheduled work.

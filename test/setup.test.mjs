@@ -51,6 +51,21 @@ test('setup is local and same-origin with CSRF, no secret readback',async t=>{
   assert.equal(badHost,403);
   const m=await (await fetch(`${url}/manifest`)).json();assert.equal(m.features.bot_user.display_name,'ANNIe');
   assert.deepEqual(m.settings.event_subscriptions.bot_events,['message.channels','message.groups']);
+  assert.equal(m.features.slash_commands[0].command,'/ez');
+  assert(m.oauth_config.scopes.bot.includes('commands'));
+});
+test('slash membership requires an invited non-DM channel and an actual human member',async()=>{
+  const requests=[];
+  const s=new Slack('synthetic',async(url,args)=>{
+    const body=JSON.parse(args.body);requests.push({url,body});
+    if(url.endsWith('/conversations.info'))return Response.json({ok:true,channel:{id:body.channel,is_member:true}});
+    return Response.json({ok:true,members:body.cursor?['U123456']:['U999999'],response_metadata:{next_cursor:body.cursor?'':'next'}});
+  });
+  assert.equal(await s.channelMember('C123456','U123456'),true);assert.equal(requests.length,3);
+  for(const info of [{id:'C123456',is_member:false},{id:'C123456',is_member:true,is_mpim:true},{id:'C123456',is_member:true,is_archived:true},{id:'C654321',is_member:true}]) {
+    let calls=0;const denied=new Slack('synthetic',async()=>{calls++;return Response.json({ok:true,channel:info});});
+    assert.equal(await denied.channelMember('C123456','U123456'),false);assert.equal(calls,1);
+  }
 });
 test('Slack sends are literal, receipt-bound and never retried on transport uncertainty',async()=>{
   let calls=0;const s=new Slack('private',async(url,args)=>{calls++;const body=JSON.parse(args.body);assert.equal(body.mrkdwn,false);assert.equal(body.unfurl_links,false);return Response.json({ok:true,channel:'C123456',ts:'123.456'});});

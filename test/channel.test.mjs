@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Channel, incoming, scopeFor, chunks } from '../src/channel.mjs';
+import { Channel, incoming, slashIncoming, scopeFor, chunks } from '../src/channel.mjs';
 import { Receipts } from '../src/storage.mjs';
 
 const identity = {teamId:'T123456', appId:'A123456', botUserId:'U999999'};
 const event = (n = 1, text = 'Hello', channel = 'C123456', threadTs) => ({type:'event_callback', team_id:identity.teamId, api_app_id:identity.appId, event_id:`Ev12345${n}`, event:{type:'message',channel,channel_type:'channel',user:'U123456',text,ts:`1234567.00000${n}`,...(threadTs === undefined ? {} : {thread_ts:threadTs})}});
+const slash = (n = 1, text = '', channel = 'C123456') => ({command:'/ez',team_id:identity.teamId,api_app_id:identity.appId,user_id:'U123456',channel_id:channel,text,trigger_id:`123456.${n}.synthetic`});
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'ez-slack-contract-'));
   const receipts = new Receipts(directory), calls = [], sends = [], settings = new Map(), runs = new Map();
@@ -33,13 +34,43 @@ async function fixture(t, options = {}) {
     if (path.endsWith('/cancel')) return {status:'cancelled'};
     return runs.get(path.split('/').at(-1));
   };
-  const slack = {send:async(channel,text,key,threadTs)=> {sends.push({channel,text,key,threadTs}); if(options.send) return options.send(channel,text,key,threadTs); return {channel,ts:'1234567.999999',state:'accepted',...(threadTs === undefined ? {} : {threadTs})};}};
+  const slack = {channelMember:options.member ?? (async()=>true),send:async(channel,text,key,threadTs)=> {sends.push({channel,text,key,threadTs}); if(options.send) return options.send(channel,text,key,threadTs); return {channel,ts:'1234567.999999',state:'accepted',...(threadTs === undefined ? {} : {threadTs})};}};
   const agent = new Channel({identity,receipts,slack,call,connection:{}});
   t.after(async () => {await settled(agent);agent.close();await receipts.serial;await rm(directory,{recursive:true,force:true});});
   return {agent,receipts,calls,sends,settings,runs,directory};
 }
 async function settled(agent) { for(let i=0;i<100 && agent.watching.size;i++) await new Promise(r=>setTimeout(r,10)); assert.equal(agent.watching.size,0); }
 
+test('native slash payloads pin workspace, app, human, channel and command identity', () => {
+  assert.equal(slashIncoming(slash(),identity).scope,scopeFor(identity.teamId,'C123456'));
+  for (const alter of [p=>p.command='/another',p=>p.team_id='T654321',p=>p.api_app_id='A654321',p=>p.user_id=identity.botUserId,p=>p.channel_id='D123456',p=>p.text=null,p=>p.trigger_id='']) {
+    const p=slash();alter(p);assert.equal(slashIncoming(p,identity),null);
+  }
+});
+test('native slash controls acknowledge durable input before membership checks, reuse core and deduplicate', async t => {
+  let acknowledged=false, checks=0;
+  const f=await fixture(t,{member:async(channel,user)=>{checks++;assert(acknowledged);assert.equal(channel,'C123456');assert.equal(user,'U123456');return true;}});
+  const ack=async response=>{assert.equal((await f.receipts.load()).length,1);assert.equal(response.response_type,'ephemeral');acknowledged=true;};
+  await f.agent.receiveSlash(slash(1,'model codex model-b medium'),ack);
+  await f.agent.receiveSlash(slash(1,'model codex model-b medium'),ack);
+  assert.equal(checks,1);assert.equal(f.calls.filter(c=>c.body?.action).length,1);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
+  assert.match(f.sends[0].text,/model-b \/ medium/);
+  await f.agent.receiveSlash(slash(2));assert.match(f.sends.at(-1).text,/\/ez status/);
+  await f.agent.receiveSlash(slash(3,'unknown'));assert.match(f.sends.at(-1).text,/\/ez help/);
+  await f.agent.receiveSlash({...slash(4),command:'/ez-annie'});assert.match(f.sends.at(-1).text,/\/ez-annie status/);
+  assert.equal(f.runs.size,0);
+  await assert.rejects(f.agent.receiveSlash({...slash(1,'new')}),/Slack event ID reused/);
+});
+test('native slash commands cannot read controls or send into unverified channels', async t => {
+  for (const member of [async()=>false,async()=>{throw Error('Provider unavailable');}]) {
+    const f=await fixture(t,{member});let acknowledged=false;
+    assert.deepEqual(await f.agent.receiveSlash(slash(1,'new'),async()=>{acknowledged=true;}),{ignored:true});
+    assert(acknowledged);assert.equal(f.calls.length,0);assert.equal(f.sends.length,0);
+    assert.equal((await f.receipts.load())[0].issue,'channel_access_unconfirmed');
+    assert.equal((await f.receipts.load())[0].closed,true);
+  }
+});
 test('only human channel messages from the pinned workspace/app enter a scope', () => {
   assert.equal(incoming(event(),identity).scope,scopeFor('T123456','C123456'));
   for(const alter of [p=>p.team_id='T999999',p=>p.api_app_id='A999999',p=>p.event.bot_id='B123456',p=>p.event.user='U999999',p=>p.event.subtype='message_changed',p=>p.event.channel_type='im',p=>p.event.channel='../bad',p=>p.event.text=' '.repeat(10),p=>p.event.text='a'.repeat(16001),p=>p.event_id='../bad']) {

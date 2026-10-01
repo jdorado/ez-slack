@@ -4,6 +4,7 @@
     "description": "Your native Ez agent, with one conversation per channel"
   },
   "features": {
+    "slash_commands": [{"command":"/ez","description":"Control this channel's Ez conversation","usage_hint":"help | status | ai | select PRESET_ID | model CLI MODEL EFFORT | new | stop","should_escape":false}],
     "bot_user": {
       "display_name": "annie",
       "always_online": false
@@ -14,7 +15,10 @@
       "bot": [
         "channels:history",
         "groups:history",
-        "chat:write"
+        "chat:write",
+        "commands",
+        "channels:read",
+        "groups:read"
       ]
     }
   },

@@ -16,6 +16,16 @@ export function incoming(payload, identity) {
     scope: scopeFor(payload.team_id, e.channel, e.thread_ts), ...(e.thread_ts === undefined ? {} : {threadTs: e.thread_ts}),
     text: e.text, inputHash: hash(e.text) };
 }
+export function slashIncoming(payload, identity) {
+  if (!/^\/ez(?:-[a-z0-9_-]{1,32})?$/.test(payload?.command ?? '') || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
+      !/^[UW][A-Z0-9]{5,40}$/.test(payload.user_id ?? '') || payload.user_id === identity.botUserId ||
+      !/^[CG][A-Z0-9]{5,40}$/.test(payload.channel_id ?? '') || typeof payload.text !== 'string' || payload.text.length > 15996 ||
+      typeof payload.trigger_id !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(payload.trigger_id)) return null;
+  const key = `${payload.team_id}:slash:${hash(payload.trigger_id).slice(0,32)}`;
+  const text = `!ez ${payload.text.trim()}`;
+  return { key, requestId: key, channel: payload.channel_id, scope: scopeFor(payload.team_id, payload.channel_id),
+    user: payload.user_id, text, nativeControl: payload.command, inputHash: hash(JSON.stringify([payload.channel_id, payload.user_id, payload.command, text])) };
+}
 export function chunks(text) {
   const result = []; let part = '';
   for (const char of text) { if (part.length + char.length > 3900) { result.push(part); part = ''; } part += char; }
@@ -33,6 +43,14 @@ export class Channel {
   async receive(payload, ack = async () => {}) {
     const input = incoming(payload, this.identity);
     if (!input) { await ack(); return { ignored: true }; }
+    return this.receiveInput(input, ack);
+  }
+  async receiveSlash(payload, ack = async () => {}) {
+    const input = slashIncoming(payload, this.identity);
+    if (!input) { await ack(); return { ignored: true }; }
+    return this.receiveInput(input, () => ack({response_type:'ephemeral',text:'Ez command received. Results appear here only if you and this agent bot are channel members.'}));
+  }
+  async receiveInput(input, ack) {
     // A concurrent envelope must remain unacknowledged until input is durable.
     // Slack can replay it after the first admission records its receipt.
     if (this.accepting.has(input.key)) return { duplicate: true };
@@ -49,11 +67,19 @@ export class Channel {
       // Slack may replay it; the receipt prevents a second native admission.
       await ack().catch(() => {});
       if (duplicate) { if (receipt.runId && !receipt.closed) this.watch(receipt); return { duplicate: true }; }
+      if (input.nativeControl) {
+        try { if (!await this.slack.channelMember(input.channel, input.user)) throw Error('Channel not authorized'); }
+        catch {
+          await this.receipts.change(input.key, r => { r.issue = 'channel_access_unconfirmed'; r.closed = true; });
+          return { ignored: true };
+        }
+      }
       if (input.text.trim().startsWith('!ez')) {
         // Control mutations are deliberate, once-only UI operations; never replay after uncertainty.
         let text;
         try { text = await this.control(input); }
         catch { await this.receipts.change(input.key, r => { r.issue = 'control_unconfirmed'; }); text = 'Control was not confirmed. Use !ez ai to read the current settings before trying another change.'; }
+        if (input.nativeControl) text = text.replaceAll('!ez', input.nativeControl);
         await this.deliver(receipt, 'control', text);
         await this.receipts.change(input.key, r => { r.closed = true; });
       } else {
