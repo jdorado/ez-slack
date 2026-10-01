@@ -2,8 +2,8 @@
 
 Report credential exposure or authority defects privately to the maintainer via
 the repository’s security reporting feature; never post tokens or conversations
-in public issues. Supported code is the latest reviewed main revision. The npm package is not
-published; use the inspected source-installation path in README.md.
+in public issues. Supported code is the latest reviewed beta release. Use the inspected package
+or source-installation path in README.md and verify the exact installed revision.
 
 Slack bot/app credentials and the Ez application bearer live only in the private
 plugin volume. The plugin never prints them, exports them or mounts its secrets

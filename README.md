@@ -17,13 +17,15 @@ to render replies. Provider reconnect is handled by Slack’s official SDK.
 Node 22+, Docker, Ez core with private scope controls (published beta.42 client;
 per-conversation model continuity fixes must be installed on the agent), an
 authorized owner, and a Slack workspace where you can install custom apps.
-The source is public. Install an inspected revision locally; the npm package is
-not published or catalog-listed. GitHub visibility does not establish package
-publication or Slack Marketplace availability.
+The source and beta package are public. Slack Marketplace distribution and core
+catalog listing are separate from this npm release.
 
-Use a reviewed commit from this repository as the source. Clone it into one
-canonical checkout, then inspect and install through the owning agent's bound
-launcher from that agent's workspace. Developer checks run in the source checkout:
+The installation operator downloads the exact package with
+`npm pack @jc_stack/ez-slack@0.1.0-beta.1 --ignore-scripts`, verifies its registry
+digest, and extracts it into a private versioned package directory. Inspect and
+install that directory through the owning agent's bound launcher from its workspace.
+A reviewed source commit is also supported; keep one canonical checkout.
+Developer checks run in the source checkout:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -34,6 +36,33 @@ ez plugins install slack --source /absolute/ez-slack --revision sha256:INSPECTED
 ez plugins start slack
 ez slack health
 ```
+
+For an existing released installation, preserve its Slack app, core binding and
+private volume. Use `ez updates prepare slack --version RELEASE_VERSION`, review
+the returned artifact identity, then `ez updates apply JOB_ID`. The installed
+updater drains active work before replacement. An operator must authorize the
+inspected revision in the existing private-network binding before activation.
+
+A private `beta.1.rc.N` sorts after the public `beta.1` in SemVer, so the updater
+cannot perform this first promotion. The installation operator backs up private
+state and records the existing private-network bindings, waits for active work to
+drain, then uses the supported data-preserving source-install cycle:
+
+```sh
+ez plugins uninstall slack
+ez plugins inspect slack --source /absolute/reviewed-package
+ez plugins install slack --source /absolute/reviewed-package --revision sha256:INSPECTED_HASH
+ez plugins start slack
+ez slack doctor --json
+```
+
+Keep the same agent tools home and Slack app. The manager retains the private
+volume; the operator preserves its approved network route and authorizes the new
+inspected revision before activation. No credential setup or re-pairing is needed.
+Verify the identity, retained settings/receipts and a native reply after promotion.
+
+Fresh-account clean-host onboarding and reboot acceptance remain beta limitations;
+existing-account native replies and provider receipts are required for rollout.
 
 An installation operator registers a private application binding through the
 existing `ezenciel-agents-application` CLI without `--share-owner`. Its private
