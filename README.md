@@ -2,8 +2,9 @@
 
 A Slack channel plugin for an existing Ez agent. Install one Slack app
 per independent agent; invite its bot into several dedicated channels. Each
-workspace/channel pair uses an Ez private scope with its own native session and
-model/effort. Channels of one agent share its filesystem and tools. Separate
+workspace/channel pair and each thread use distinct Ez private scopes with their
+own native sessions and model/effort. Channels and threads of one agent share
+its filesystem and tools. Separate
 agents require separate Ez installations, plugin volumes and Slack apps.
 
 Slack Socket Mode is the provider connection. The plugin calls the standard
@@ -79,8 +80,13 @@ Invite the bot to an explicitly intended channel and send a human text message.
 The bot processes human messages from public/private channels to which it is
 invited. All human members there act with this agent’s owner authority: use
 dedicated trusted channels. Bot messages, edits, message subtypes, DMs and other
-workspaces/apps are ignored. Thread messages share the channel’s conversation;
-replies go to the channel, not an independent thread session.
+workspaces/apps are ignored. Ordinary channel messages continue the channel’s
+conversation. A thread uses its parent message’s `thread_ts` as its separate
+scope: replies in that thread continue the same native session and are delivered
+back into that thread. Different threads never share conversation history. Core
+still owns execution serialization and workspace authority; separate sessions
+do not create parallel writers. Thread sessions begin with the first received
+thread message; the plugin does not copy the channel transcript into them.
 
 ## Channel controls
 
@@ -93,17 +99,19 @@ replies go to the channel, not an independent thread session.
 !ez stop
 ```
 
-`!ez ai` reads core’s installed catalog and this channel’s selection. Use those
+`!ez ai` reads core’s installed catalog and this channel or thread’s selection. Use those
 exact choices. Controls use core’s optimistic expected-session check and canonical
 readback. A model change follows core/native continuity semantics; a different
-engine/provider may start a fresh session. `!ez new` resets only this channel to
-the default AI. `!ez stop` cancels this adapter’s known pending runs in this channel.
+engine/provider may start a fresh session. Controls posted inside a thread apply
+only to that thread. `!ez new` resets only the current channel or thread to
+the default AI. `!ez stop` cancels this adapter’s known pending runs in that scope.
 It does not remove schedules or cancel unrelated owner work.
 
 Read the same canonical settings through the installed plugin:
 
 ```sh
 ez slack settings --channel C_CHANNEL_ID
+ez slack settings --channel C_CHANNEL_ID --thread PARENT_MESSAGE_TS
 ez slack receipts
 ez slack receipts --key T_WORKSPACE_ID:Ev_EVENT_ID
 ```
@@ -122,6 +130,9 @@ request/run pointers and provider send IDs/hashes; no transcripts or persisted
 engine run statuses. Retain at most 1000 receipts, evicting confirmed closed
 records first. Capacity blocks new admission if only unresolved records remain.
 Do not reuse old Slack event IDs after bounded receipt retention.
+Thread receipts retain the parent timestamp for restart delivery. Existing
+pre-upgrade receipts keep their original channel scope and destination; they
+are never replayed or moved into a new thread session.
 
 Slack replay within retained receipts does not start another turn. Restart resumes
 read/render for known core run pointers only; never resubmits an uncertain inbound

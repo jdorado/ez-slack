@@ -7,7 +7,7 @@ import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { connection, slackConfig } from './config.mjs';
 import { Slack } from './slack.mjs';
 import { Receipts } from './storage.mjs';
-import { Channel, scopeFor } from './channel.mjs';
+import { Channel, scopeFor, validThreadTs } from './channel.mjs';
 import { jsonBody, rpc } from './ipc.mjs';
 
 export async function serve(directory, { createSocket = options => new SocketModeClient(options) } = {}) {
@@ -55,8 +55,9 @@ export async function serve(directory, { createSocket = options => new SocketMod
           if (Object.keys(args).some(k => k !== 'key') || (args.key !== undefined && (typeof args.key !== 'string' || args.key.length > 100))) throw Error('Invalid receipt key');
           const rows = await receipts.load(); data = args.key ? rows.find(r => r.key === args.key) ?? null : rows.slice(-20);
         } else if (command === 'settings') {
-          if (!identity || !bound || !/^[CG][A-Z0-9]{5,40}$/.test(args.channel ?? '') || Object.keys(args).some(k => k !== 'channel')) throw Error('Supply a Slack channel ID');
-          data = await applicationCall(`/v1/scope-control?scope=${encodeURIComponent(scopeFor(identity.teamId, args.channel))}`, undefined, bound);
+          if (!identity || !bound || !/^[CG][A-Z0-9]{5,40}$/.test(args.channel ?? '') ||
+            (args.threadTs !== undefined && !validThreadTs(args.threadTs)) || Object.keys(args).some(k => !['channel','threadTs'].includes(k))) throw Error('Supply a Slack channel ID and optional root thread timestamp');
+          data = await applicationCall(`/v1/scope-control?scope=${encodeURIComponent(scopeFor(identity.teamId, args.channel, args.threadTs))}`, undefined, bound);
         } else throw Error('Unknown operation');
         respond(200, {ok: true, data});
       } catch { respond(400, {ok: false, error: 'Slack operation unavailable; check configuration and bound identity'}); }

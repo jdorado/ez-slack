@@ -7,7 +7,7 @@ import { Channel, incoming, scopeFor, chunks } from '../src/channel.mjs';
 import { Receipts } from '../src/storage.mjs';
 
 const identity = {teamId:'T123456', appId:'A123456', botUserId:'U999999'};
-const event = (n = 1, text = 'Hello', channel = 'C123456') => ({type:'event_callback', team_id:identity.teamId, api_app_id:identity.appId, event_id:`Ev12345${n}`, event:{type:'message',channel,channel_type:'channel',user:'U123456',text,ts:`1234567.00000${n}`}});
+const event = (n = 1, text = 'Hello', channel = 'C123456', threadTs) => ({type:'event_callback', team_id:identity.teamId, api_app_id:identity.appId, event_id:`Ev12345${n}`, event:{type:'message',channel,channel_type:'channel',user:'U123456',text,ts:`1234567.00000${n}`,...(threadTs === undefined ? {} : {thread_ts:threadTs})}});
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'ez-slack-contract-'));
   const receipts = new Receipts(directory), calls = [], sends = [], settings = new Map(), runs = new Map();
@@ -33,7 +33,7 @@ async function fixture(t, options = {}) {
     if (path.endsWith('/cancel')) return {status:'cancelled'};
     return runs.get(path.split('/').at(-1));
   };
-  const slack = {send:async(channel,text,key)=> {sends.push({channel,text,key}); if(options.send) return options.send(channel,text,key); return {channel,ts:'1234567.999999',state:'accepted'};}};
+  const slack = {send:async(channel,text,key,threadTs)=> {sends.push({channel,text,key,threadTs}); if(options.send) return options.send(channel,text,key,threadTs); return {channel,ts:'1234567.999999',state:'accepted',...(threadTs === undefined ? {} : {threadTs})};}};
   const agent = new Channel({identity,receipts,slack,call,connection:{}});
   t.after(async () => {await settled(agent);agent.close();await receipts.serial;await rm(directory,{recursive:true,force:true});});
   return {agent,receipts,calls,sends,settings,runs,directory};
@@ -45,7 +45,38 @@ test('only human channel messages from the pinned workspace/app enter a scope', 
   for(const alter of [p=>p.team_id='T999999',p=>p.api_app_id='A999999',p=>p.event.bot_id='B123456',p=>p.event.user='U999999',p=>p.event.subtype='message_changed',p=>p.event.channel_type='im',p=>p.event.channel='../bad',p=>p.event.text=' '.repeat(10),p=>p.event.text='a'.repeat(16001),p=>p.event_id='../bad']) {
     const p=event();alter(p);assert.equal(incoming(p,identity),null);
   }
-  const thread=event();thread.event.thread_ts='123.456';assert.equal(incoming(thread,identity).scope,scopeFor('T123456','C123456'));
+  const thread=event(1,'Hello','C123456','123.456');assert.equal(incoming(thread,identity).scope,scopeFor('T123456','C123456','123.456'));
+  assert.notEqual(incoming(thread,identity).scope,incoming(event(),identity).scope);
+  for(const threadTs of [null,123,'','../bad','123',`${'1'.repeat(21)}.123`]) assert.equal(incoming(event(1,'Hello','C123456',threadTs),identity),null);
+});
+test('thread roots isolate scopes and every reply resumes its root, with durable reply destinations', async t => {
+  const f=await fixture(t);
+  for(const [n,root] of [[1,undefined],[2,'1234567.111111'],[3,'1234567.222222'],[4,'1234567.111111']]) await f.agent.receive(event(n,'Hello','C123456',root));
+  await settled(f.agent);
+  const scopes=f.calls.filter(c=>c.path==='/v1/runs').map(c=>c.body.scope);
+  assert.equal(new Set(scopes.slice(0,3)).size,3);assert.equal(scopes[1],scopes[3]);
+  assert.deepEqual(f.sends.map(s=>s.threadTs),[undefined,'1234567.111111','1234567.222222','1234567.111111']);
+  const rows=await f.receipts.load();assert.deepEqual(rows.map(r=>r.threadTs),f.sends.map(s=>s.threadTs));
+  assert(rows.every(r=>r.closed && r.sends[0].state==='accepted' && r.sends[0].threadTs===r.threadTs));
+  await assert.rejects(f.agent.receive(event(2,'Hello','C123456','1234567.333333')),/event ID reused/);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,4);
+});
+test('restart renders an existing thread run into its original thread without another admission', async t => {
+  const f=await fixture(t), root='1234567.111111', id=`r_app_${'1'.padStart(64,'0')}`;
+  await f.receipts.change('thread-pending',r=>Object.assign(r,{channel:'C123456',threadTs:root,scope:scopeFor(identity.teamId,'C123456',root),runId:id}));
+  f.runs.set(id,{id,scope:scopeFor(identity.teamId,'C123456',root),status:'completed',messages:[{id:'reply',text:'Resumed reply'}]});
+  await f.agent.resumeDelivery();await settled(f.agent);await f.agent.resumeDelivery();
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);assert.equal(f.sends.length,1);assert.equal(f.sends[0].threadTs,root);
+});
+test('pre-upgrade receipts retain their admitted channel scope and never replay into a new thread session', async t => {
+  const f=await fixture(t), p=event(1,'Hello','C123456','1234567.111111');
+  const {hash}=await import('../src/storage.mjs');
+  const id=`r_app_${'1'.padStart(64,'0')}`, scope=scopeFor(identity.teamId,'C123456');
+  await f.receipts.change(`${identity.teamId}:${p.event_id}`,r=>Object.assign(r,{channel:'C123456',scope,inputHash:hash(p.event.text),runId:id}));
+  f.runs.set(id,{id,scope,status:'completed',messages:[{id:'reply',text:'Previously admitted reply'}]});
+  await f.agent.receive(p);await settled(f.agent);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);assert.equal(f.sends[0].threadTs,undefined);
+  assert.equal((await f.receipts.load())[0].scope,scope);
 });
 test('stable event deduplication, two distinct scopes, provider receipts and restart delivery', async t => {
   const f=await fixture(t);let acks=0;
@@ -86,6 +117,19 @@ test('channel-local model/effort controls use exact catalog and canonical readba
   const writes=f.calls.filter(c=>c.body?.action);assert.equal(writes.length,1);assert.deepEqual(writes[0].body,{action:'model',cli:'codex',provider:'openai',model:'model-b',effort:'medium',expectedSession:null});
   assert(f.sends[0].text.includes('model-b / medium'));assert(f.sends[1].text.includes('model-a / low'));
   await f.agent.receive(event(3,'!ez model codex invented ultra'));assert.equal(f.calls.filter(c=>c.body?.action).length,1);
+});
+test('thread controls change only that thread, render there, and cancel only its pending runs', async t => {
+  const f=await fixture(t), a='1234567.111111', b='1234567.222222';
+  await f.agent.receive(event(1,'!ez model codex model-b medium','C123456',a));
+  await f.agent.receive(event(2,'!ez ai','C123456',b));
+  await f.agent.receive(event(3,'!ez ai'));
+  assert.equal(f.settings.size,1);assert(f.sends[0].text.startsWith('This thread:'));assert(f.sends[0].text.includes('model-b / medium'));
+  assert(f.sends.slice(1).every(s=>s.text.includes('model-a / low')));
+  assert.deepEqual(f.sends.map(s=>s.threadTs),[a,b,undefined]);
+  for(const [key,root,n]of [['one',a,1],['two',b,2],['three',undefined,3]]) await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',threadTs:root,scope:scopeFor(identity.teamId,'C123456',root),runId:`r_app_${String(n).padStart(64,'0')}`}));
+  await f.agent.receive(event(4,'!ez stop','C123456',a));
+  assert.deepEqual(f.calls.filter(c=>c.path.endsWith('/cancel')).map(c=>c.path),[`/v1/runs/r_app_${'1'.padStart(64,'0')}/cancel`]);
+  assert(f.sends.at(-1).text.endsWith('in this thread.'));assert.equal(f.sends.at(-1).threadTs,a);
 });
 test('uncertain admission never resubmits on replay or restart', async t => {
   const f=await fixture(t,{call:async()=>{throw Object.assign(Error('Lost admission response'),{admitted:undefined});}});

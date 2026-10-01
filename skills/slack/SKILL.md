@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Read the installed Slack channel transport identity, receipts and per-channel Ez settings; onboard the provider with private credentials.
+description: Read the installed Slack channel transport identity, receipts and per-channel or per-thread Ez settings; onboard the provider with private credentials.
 ---
 
 Use the owning agent’s bound `ez slack --help` for command discovery. This plugin
@@ -9,6 +9,7 @@ provider credentials, direct core requests or host state as a substitute.
 
 `ez slack doctor --json` reads authenticated Slack identity and core registration.
 `ez slack settings --channel C_ID` reads that channel’s canonical settings.
+Add `--thread PARENT_TS` to read a thread’s separate native session and settings.
 `ez slack receipts [--key TEAM:EVENT]` reads transport pointers and send receipts.
 Health/connection alone is not proof of a native reply or provider delivery.
 
@@ -27,7 +28,13 @@ Invited dedicated channels each have a separate native scope; all their human
 members use this agent’s tool authority. Channel controls are `!ez help`, `!ez ai`,
 `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`, `!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
-Threads share the channel session; other bots are ignored. Independent agents
+Each thread has its own native scope keyed by the parent message timestamp;
+replies continue that thread’s session and are delivered inside it. Controls
+inside a thread affect only that thread. Ordinary channel messages keep the
+channel session. New thread sessions do not copy channel history. Core owns
+serialization; all scopes still share this agent’s workspace. Other bots are
+ignored. Pre-upgrade receipts keep their original destination and are never
+replayed into a thread. Independent agents
 must use their own installed plugin/private state/Slack app.
 
 An uncertain admission or provider send is not retried. Read its receipt and
