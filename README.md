@@ -169,6 +169,7 @@ Read the same canonical settings through the installed plugin:
 
 ```sh
 ez slack settings --channel C_CHANNEL_ID
+ez slack doctor --json --channel C_CHANNEL_ID
 ez slack settings --channel C_CHANNEL_ID --thread PARENT_MESSAGE_TS
 ez slack receipts
 ez slack receipts --key T_WORKSPACE_ID:Ev_EVENT_ID
@@ -176,7 +177,10 @@ ez slack receipts --key T_WORKSPACE_ID:Ev_EVENT_ID
 
 Exit codes: 0 success, 1 invalid/unavailable operation, 2 doctor not connected.
 `health` proves service availability, not Slack/native delivery. `doctor` is
-read-only and verifies the Slack identity and current Ez registration. Completion
+read-only and verifies the Slack identity and current Ez registration. Its optional
+`--channel` checks the bot against the actual channel member list, reporting a
+provider error code if unavailable; exit 2 also covers unconfirmed membership.
+Slash admission checks both caller and bot in that list. Completion
 requires real inbound admission, native reply, matching channel plus Slack `ts`
 receipt. Slack acceptance does not prove a person read the message.
 

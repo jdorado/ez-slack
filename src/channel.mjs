@@ -69,9 +69,9 @@ export class Channel {
       await ack().catch(() => {});
       if (duplicate) { if (receipt.runId && !receipt.closed) this.watch(receipt); return { duplicate: true }; }
       if (input.nativeControl) {
-        try { if (!await this.slack.channelMember(input.channel, input.user)) throw Error('Channel not authorized'); }
-        catch {
-          await this.receipts.change(input.key, r => { r.issue = 'channel_access_unconfirmed'; r.closed = true; });
+        try { if (!await this.slack.channelMember(input.channel, input.user, this.identity.botUserId)) throw Error('Channel not authorized'); }
+        catch (e) {
+          await this.receipts.change(input.key, r => { r.issue = 'channel_access_unconfirmed'; if (/^[a-z_]{1,80}$/.test(e.providerCode ?? '')) r.providerIssue = e.providerCode; r.closed = true; });
           return { ignored: true };
         }
       }

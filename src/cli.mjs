@@ -15,7 +15,7 @@ export async function main() {
     const [command] = positionals;
     if (positionals.length > 1) throw Error('Unexpected arguments');
     if (values.version) return output({version: JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version});
-    if (!command || values.help) return output({commands: ['health', 'doctor --json', 'configure (private JSON stdin: url, token, privateHttp)', 'configure-slack (private JSON stdin: teamId, appId, botToken, appToken)', 'manifest --name NAME', 'setup --team T… --name NAME [--port 8788]', 'settings --channel C… [--thread ROOT_TS]', 'receipts [--key TEAM:EVENT]'], notes: 'Installed plugin only. Setup includes native controls by default: ez tools serve 18878:8788 slack setup --team T… --name NAME; open http://127.0.0.1:18878. Command name derives from NAME. Existing apps: update the generated manifest and reinstall for new permissions. Restart after configuration. Channel controls: !ez help. No arbitrary send or native execution command.'});
+    if (!command || values.help) return output({commands: ['health', 'doctor --json [--channel C…]', 'configure (private JSON stdin: url, token, privateHttp)', 'configure-slack (private JSON stdin: teamId, appId, botToken, appToken)', 'manifest --name NAME', 'setup --team T… --name NAME [--port 8788]', 'settings --channel C… [--thread ROOT_TS]', 'receipts [--key TEAM:EVENT]'], notes: 'Installed plugin only. Setup includes native controls by default: ez tools serve 18878:8788 slack setup --team T… --name NAME; open http://127.0.0.1:18878. Command name derives from NAME. Existing apps: update the generated manifest and reinstall for new permissions. Restart after configuration. Channel controls: !ez help. No arbitrary send or native execution command.'});
     if (command === 'manifest') return output(appManifest(values.name));
     const directory = resolve(process.env.EZ_SLACK_STATE ?? '/state');
     if (command === 'configure') { await saveConnection(directory, await jsonBody(process.stdin)); return output({configured:true, restartRequired:true}); }
@@ -35,6 +35,6 @@ export async function main() {
     if (!['health','doctor','settings','receipts'].includes(command)) throw Error('Unknown command; use --help');
     const data = await rpc(directory, command, {...(values.channel ? {channel:values.channel} : {}), ...(values.thread !== undefined ? {threadTs:values.thread} : {}), ...(values.key ? {key:values.key} : {})});
     output({ok:true, data});
-    if (command === 'doctor' && !data.connected) process.exitCode = 2;
+    if (command === 'doctor' && (!data.connected || (data.channelAccess && data.channelAccess.botMember !== true))) process.exitCode = 2;
   } catch (e) { process.stderr.write(JSON.stringify({ok:false,error:e.code === 'ENOENT' || e.code === 'ECONNREFUSED' ? 'Slack service or configuration unavailable' : e.message}) + '\n'); process.exitCode = 1; }
 }

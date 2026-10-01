@@ -48,12 +48,17 @@ export async function serve(directory, { createSocket = options => new SocketMod
         let data;
         if (command === 'health') data = { healthy: true, configured: Boolean(identity), connected, issue };
         else if (command === 'doctor') {
+          if (Object.keys(args).some(k => k !== 'channel') || (args.channel !== undefined && !/^[CG][A-Z0-9]{5,40}$/.test(args.channel))) throw Error('Invalid doctor channel');
           const c = await connection(directory), s = await slackConfig(directory);
           const registration = await applicationCall('/v1/registration', undefined, c);
-          const who = await new Slack(s.botToken).call('auth.test');
+          const provider = new Slack(s.botToken), who = await provider.call('auth.test');
           if (who.team_id !== s.teamId || who.user_id !== s.botUserId) throw Error('Slack identity changed');
           data = { configured: true, connected, issue, teamId: s.teamId, appId: s.appId, botUserId: s.botUserId, bindingId: registration.bindingId, ownerId: registration.ownerId,
             receiptCount: (await receipts.load()).length, watching: channel?.watching.size ?? 0 };
+          if (args.channel !== undefined) {
+            try { data.channelAccess = {channel:args.channel,botMember:await provider.channelMember(args.channel,s.botUserId,s.botUserId)}; }
+            catch (e) { data.channelAccess = {channel:args.channel,botMember:null,issue:/^[a-z_]{1,80}$/.test(e.providerCode ?? '') ? e.providerCode : 'membership_unavailable'}; }
+          }
         } else if (command === 'receipts') {
           if (Object.keys(args).some(k => k !== 'key') || (args.key !== undefined && (typeof args.key !== 'string' || args.key.length > 100))) throw Error('Invalid receipt key');
           const rows = await receipts.load(); data = args.key ? rows.find(r => r.key === args.key) ?? null : rows.slice(-20);

@@ -78,13 +78,17 @@ test('slash membership requires an invited non-DM channel and an actual human me
   const requests=[];
   const s=new Slack('synthetic',async(url,args)=>{
     const body=JSON.parse(args.body);requests.push({url,body});
-    if(url.endsWith('/conversations.info'))return Response.json({ok:true,channel:{id:body.channel,is_member:true}});
+    if(url.endsWith('/conversations.info'))return Response.json({ok:true,channel:{id:body.channel,is_channel:true,is_archived:false,is_im:false,is_mpim:false}});
     return Response.json({ok:true,members:body.cursor?['U123456']:['U999999'],response_metadata:{next_cursor:body.cursor?'':'next'}});
   });
-  assert.equal(await s.channelMember('C123456','U123456'),true);assert.equal(requests.length,3);
-  for(const info of [{id:'C123456',is_member:false},{id:'C123456',is_member:true,is_mpim:true},{id:'C123456',is_member:true,is_archived:true},{id:'C654321',is_member:true}]) {
+  assert.equal(await s.channelMember('C123456','U123456','U999999'),true);assert.equal(requests.length,3);
+  for(const info of [{id:'C123456'}, {id:'C123456',is_channel:true,is_mpim:true},{id:'C123456',is_channel:true,is_archived:true},{id:'C654321',is_channel:true}]) {
     let calls=0;const denied=new Slack('synthetic',async()=>{calls++;return Response.json({ok:true,channel:info});});
-    assert.equal(await denied.channelMember('C123456','U123456'),false);assert.equal(calls,1);
+    assert.equal(await denied.channelMember('C123456','U123456','U999999'),false);assert.equal(calls,1);
+  }
+  for(const members of [['U123456'],['U999999'],[]]) {
+    const denied=new Slack('synthetic',async url=>Response.json(url.endsWith('/conversations.info')?{ok:true,channel:{id:'C123456',is_group:true}}:{ok:true,members}));
+    assert.equal(await denied.channelMember('C123456','U123456','U999999'),false);
   }
 });
 test('Slack sends are literal, receipt-bound and never retried on transport uncertainty',async()=>{
@@ -111,7 +115,13 @@ test('settings CLI and service read the canonical thread scope without changing 
   await saveConnection(d,{url:`http://127.0.0.1:${core.address().port}`,token:'a'.repeat(43),privateHttp:true});
   await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}:{url:'wss://synthetic'}});
   const originalFetch=globalThis.fetch;
-  globalThis.fetch=async(url,args)=>String(url)==='https://slack.com/api/auth.test'?Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}):originalFetch(url,args);
+  let membershipIssue=false;
+  globalThis.fetch=async(url,args)=>{
+    if(String(url)==='https://slack.com/api/auth.test')return Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'});
+    if(String(url)==='https://slack.com/api/conversations.info')return Response.json(membershipIssue?{ok:false,error:'missing_scope'}:{ok:true,channel:{id:'C123456',is_channel:true}});
+    if(String(url)==='https://slack.com/api/conversations.members')return Response.json({ok:true,members:['U123456']});
+    return originalFetch(url,args);
+  };
   t.after(()=>{globalThis.fetch=originalFetch;});
   const socket=new EventEmitter();socket.start=async()=>socket.emit('connected');socket.disconnect=async()=>{};
   const service=await serve(d,{createSocket:()=>socket});t.after(()=>service.close());
@@ -121,6 +131,10 @@ test('settings CLI and service read the canonical thread scope without changing 
     child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
   });
   assert.equal(result.code,0,result.stderr);assert.equal(JSON.parse(result.stdout).data.activeSessionId,'slack:T123456:C123456:thread:1234567.111111');
+  assert.deepEqual((await rpc(d,'doctor',{channel:'C123456'})).channelAccess,{channel:'C123456',botMember:true});
+  membershipIssue=true;
+  assert.deepEqual((await rpc(d,'doctor',{channel:'C123456'})).channelAccess,{channel:'C123456',botMember:null,issue:'missing_scope'});
+  await assert.rejects(rpc(d,'doctor',{channel:'../invalid'}));
   const calls=paths.length;await assert.rejects(rpc(d,'settings',{channel:'C123456',threadTs:'../invalid'}));assert.equal(paths.length,calls);
 });
 test('unconfigured service is inert, rejects a second service and restarts without stale locks',async t=>{

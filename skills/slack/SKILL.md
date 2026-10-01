@@ -8,6 +8,8 @@ is the agent-facing Slack execution surface; do not use scripts, raw Slack APIs,
 provider credentials, direct core requests or host state as a substitute.
 
 `ez slack doctor --json` reads authenticated Slack identity and core registration.
+Add `--channel C_ID` to check bot membership and provider access errors (read-only;
+exit 2 for unconfirmed membership). Slash admission verifies both bot and caller.
 `ez slack settings --channel C_ID` reads that channel’s canonical settings.
 Add `--thread PARENT_TS` to read a thread’s separate native session and settings.
 `ez slack receipts [--key TEAM:EVENT]` reads transport pointers and send receipts.

@@ -5,6 +5,7 @@
 - Include native Slack controls by default in the generated linking manifest, with an app-specific command name derived from its name. One plugin command registry owns setup, registration hints and help; `slack manifest --name NAME` returns the same manifest offline.
 - Read channel/thread status from canonical settings, live pending runs and durable transport receipts without creating a native turn.
 - Admit native slash controls durably, pin the workspace/app, verify channel membership and deduplicate before deterministic core operations.
+- Verify bot and caller against the actual member list, without requiring optional conversation metadata. Diagnose channel access through read-only `doctor --channel` and sanitized provider error codes in receipts.
 
 ## 0.1.0-beta.1
 
