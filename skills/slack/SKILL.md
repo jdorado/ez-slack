@@ -17,7 +17,10 @@ For onboarding, the installation operator must already have registered a private
 core application binding and an approved network. The operator passes the binding
 connection through `slack configure` JSON stdin. Run the loopback-only setup via
 `ez tools serve 18878:8788 slack setup --team T_ID --name NAME`; the human enters
-Slack tokens in that local password form. An authorized installation operator
+Slack tokens in that local password form. Setup's generated app manifest includes
+native controls by default; `slack manifest --name NAME` returns the same manifest
+offline. Existing apps need their manifest updated and Slack-requested reinstall.
+An authorized installation operator
 can use `slack configure-slack` with private JSON stdin: `teamId`, `appId`,
 `botToken`, `appToken`; it returns only verified identity, never credentials. Never request/store/repeat tokens in
 chat. After saving, stop the setup command, restart the plugin, run doctor, and
@@ -29,13 +32,12 @@ members use this agent’s tool authority. Channel controls are `!ez help`,
 `!ez status`, `!ez ai`, `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`,
 `!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
-Native Slack controls use `/ez` (menu), `/ez status`, `/ez ai`, `/ez select`,
-`/ez model`, `/ez new` and `/ez stop`, with the same arguments. Both caller and
-bot must be channel members. Slash commands never enter the engine. Enable
-`/ez` on only one agent app in a workspace; register `/ez-NAME` (lowercase,
-up to 32 letters/digits/hyphens/underscores) for other agent apps. The same
-controls use the registered prefix. Slack gives duplicate names to the most
-recently installed app. Use message controls in threads.
+Native Slack controls use the generated app-specific prefix, for example
+`/ez-annie`, followed by the same controls and arguments. The prefix alone shows
+help. Setup derives it from NAME; no channel-specific registration is needed.
+Both caller and bot must be channel members. Slash commands never enter the
+engine. Use distinct app names because Slack gives duplicate command names to
+the most recently installed app. Use message controls in threads.
 `!ez status` reads scoped AI/session settings, live state of this adapter's known
 pending runs and unresolved transport receipts. It creates no turn or session;
 unavailable runs are reported without replay. It excludes unrelated scheduled work.

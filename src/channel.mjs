@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
+import { controls as controlCommands, controlHelp } from './commands.mjs';
 
 export const validThreadTs = value => typeof value === 'string' && /^\d{1,20}\.\d{1,20}$/.test(value);
 export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${threadTs === undefined ? '' : `:thread:${threadTs}`}`;
@@ -103,7 +104,9 @@ export class Channel {
     const [prefix, command = 'help', ...args] = input.text.trim().split(/\s+/);
     const place = input.threadTs === undefined ? 'channel' : 'thread';
     if (prefix !== '!ez') return 'Use !ez help for channel controls.';
-    if (command === 'help') return `!ez status — AI, conversation, work and delivery in this ${place}\n!ez ai — current settings and available choices\n!ez select PRESET_ID\n!ez model CLI MODEL [EFFORT]\n!ez new — fresh conversation in this ${place}\n!ez stop — cancel this ${place}’s pending runs`;
+    const spec = controlCommands.find(c => c.name === command);
+    if (!spec || !spec.counts.includes(args.length)) return 'Unknown control. Use !ez help.';
+    if (command === 'help') return controlHelp();
     if (command === 'stop') {
       if (args.length) throw Error('Use !ez stop');
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed);

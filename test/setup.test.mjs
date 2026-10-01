@@ -11,6 +11,7 @@ import { rpc } from '../src/ipc.mjs';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { appManifest, controls, controlHelp, slashCommandFor } from '../src/commands.mjs';
 
 const config={teamId:'T123456',appId:'A123456',botToken:'xoxb-synthetic-private-bot',appToken:'xapp-synthetic-private-app'};
 async function dir(t){const d=await mkdtemp(join(tmpdir(),'ez-slack-setup-'));t.after(()=>rm(d,{recursive:true,force:true}));return d;}
@@ -51,8 +52,27 @@ test('setup is local and same-origin with CSRF, no secret readback',async t=>{
   assert.equal(badHost,403);
   const m=await (await fetch(`${url}/manifest`)).json();assert.equal(m.features.bot_user.display_name,'ANNIe');
   assert.deepEqual(m.settings.event_subscriptions.bot_events,['message.channels','message.groups']);
-  assert.equal(m.features.slash_commands[0].command,'/ez');
+  assert.deepEqual(m,appManifest('ANNIe'));
+  assert.equal(m.features.slash_commands[0].command,'/ez-annie');
   assert(m.oauth_config.scopes.bot.includes('commands'));
+  assert(html.includes('/ez-annie'));
+});
+test('linking defaults and offline CLI derive the same native menu from the control registry',async()=>{
+  for(const name of ['ANNIe','Ezfamily','JC Stack']) {
+    const m=appManifest(name), command=m.features.slash_commands[0];
+    assert.equal(command.command,slashCommandFor(name));
+    assert.equal(m.features.bot_user.display_name,name);
+    assert.equal(m.settings.socket_mode_enabled,true);
+    assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read']);
+    for(const c of controls) { assert(command.usage_hint.includes(c.name));assert(controlHelp(command.command).includes(`${command.command} ${c.name}`)); }
+  }
+  assert.equal(slashCommandFor('Ez'),'/ez');
+  assert.throws(()=>slashCommandFor('  '));assert.throws(()=>slashCommandFor('A'.repeat(29)));
+  const result=await new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[new URL('../bin/ez-slack.mjs',import.meta.url).pathname,'manifest','--name','Ezfamily'],{env:{...process.env,EZ_SLACK_STATE:'/unavailable-state'},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';
+    child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
+  });
+  assert.equal(result.code,0,result.stderr);assert.deepEqual(JSON.parse(result.stdout),appManifest('Ezfamily'));
 });
 test('slash membership requires an invited non-DM channel and an actual human member',async()=>{
   const requests=[];
