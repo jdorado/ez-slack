@@ -30,7 +30,9 @@ export class Channel {
   async receive(payload, ack = async () => {}) {
     const input = incoming(payload, this.identity);
     if (!input) { await ack(); return { ignored: true }; }
-    if (this.accepting.has(input.key)) { await ack(); return { duplicate: true }; }
+    // A concurrent envelope must remain unacknowledged until input is durable.
+    // Slack can replay it after the first admission records its receipt.
+    if (this.accepting.has(input.key)) return { duplicate: true };
     this.accepting.add(input.key);
     try {
       let duplicate = false;
