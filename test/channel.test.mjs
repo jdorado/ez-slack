@@ -35,7 +35,7 @@ async function fixture(t, options = {}) {
   };
   const slack = {send:async(channel,text,key)=> {sends.push({channel,text,key}); if(options.send) return options.send(channel,text,key); return {channel,ts:'1234567.999999',state:'accepted'};}};
   const agent = new Channel({identity,receipts,slack,call,connection:{}});
-  t.after(async () => {agent.close();await rm(directory,{recursive:true,force:true});});
+  t.after(async () => {await settled(agent);agent.close();await receipts.serial;await rm(directory,{recursive:true,force:true});});
   return {agent,receipts,calls,sends,settings,runs,directory};
 }
 async function settled(agent) { for(let i=0;i<100 && agent.watching.size;i++) await new Promise(r=>setTimeout(r,10)); assert.equal(agent.watching.size,0); }
