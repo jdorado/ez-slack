@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+// Capture the loaded revision; an upgrade must not relabel an old process.
+const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
 import { controls as controlCommands, controlHelp } from './commands.mjs';
@@ -125,7 +129,8 @@ export class Channel {
         return run.status;
       }));
       const count = status => results.filter(r => r.status === 'fulfilled' && r.value === status).length;
-      return [`This ${place}`,
+      return ['System', ...(controls.software ?? ['Runtime versions unavailable; upgrade Ez.']),
+        `Slack transport: v${version}`, '', `This ${place}`,
         `AI: ${presetText(selectedPreset(controls))}`,
         `Conversation: ${controls.activeSessionId ?? 'new'}`,
         `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,

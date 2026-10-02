@@ -125,6 +125,11 @@ still owns execution serialization and workspace authority; separate sessions
 do not create parallel writers. Thread sessions begin with the first received
 thread message; the plugin does not copy the channel transcript into them.
 
+`!ez status` shows the running Slack transport version plus the runtime/version
+summary shared with Telegram when the installed Ez supports it. Older Ez
+versions are explicitly reported as unavailable, never inferred from plugin
+dependencies.
+
 ## Channel controls
 
 Use these four controls in the channel:

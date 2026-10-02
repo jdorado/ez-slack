@@ -152,7 +152,7 @@ test('channel-local model/effort controls use exact catalog and canonical readba
 test('status reads live work and AI only in the requested channel or thread without mutations', async t => {
   for (const root of [undefined, '1234567.111111']) {
     const f=await fixture(t), scope=scopeFor(identity.teamId,'C123456',root);
-    f.settings.set(scope,{activeSessionId:'session-current',ai:{selectedId:'choice',presets:[{id:'choice',cli:'codex',model:'model-b',effort:'medium'}]}});
+    f.settings.set(scope,{software:['Relay: running · v0.1.0-beta.46','Host transport: running · v0.1.0-beta.46','Plugins: slack 0.1.0-beta.2.rc.7'],activeSessionId:'session-current',ai:{selectedId:'choice',presets:[{id:'choice',cli:'codex',model:'model-b',effort:'medium'}]}});
     for (const [n,status] of [[1,'running'],[2,'queued'],[3,'completed']]) {
       const id=`r_app_${String(n).padStart(64,'0')}`;
       f.runs.set(id,{id,scope,status});
@@ -162,6 +162,8 @@ test('status reads live work and AI only in the requested channel or thread with
       await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',scope:otherScope,runId:'unrelated',uncertain:true}));
     }
     await f.agent.receive(event(10,'!ez status','C123456',root));
+    assert.match(f.sends[0].text,/System\nRelay: running · v0.1.0-beta.46\nHost transport: running · v0.1.0-beta.46/);
+    assert.match(f.sends[0].text,/Slack transport: v/);
     assert.match(f.sends[0].text,/AI: codex \/ model-b \/ medium\nConversation: session-current/);
     assert.match(f.sends[0].text,/Work: 1 running; 1 queued; 1 finished awaiting delivery; 0 unavailable/);
     assert.match(f.sends[0].text,/Transport: 0 unconfirmed inputs; 0 receipts need attention/);
