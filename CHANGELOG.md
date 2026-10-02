@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-beta.2 (candidate)
+## 0.1.0-beta.2
 
 - Simplify channel/thread AI controls to `ai`, `ai list`, `ai CLI MODEL [EFFORT]` and `ai effort EFFORT`. Show concise canonical selections, preserve CLI/model/provider for effort-only changes, and keep new-channel inheritance unchanged. Previous controls remain accepted but are omitted from primary help.
 
