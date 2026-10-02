@@ -64,7 +64,12 @@ test('linking defaults and offline CLI derive the same native menu from the cont
     assert.equal(m.features.bot_user.display_name,name);
     assert.equal(m.settings.socket_mode_enabled,true);
     assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read']);
-    for(const c of controls) { assert(command.usage_hint.includes(c.name));assert(controlHelp(command.command).includes(`${command.command} ${c.name}`)); }
+    for(const usage of controls.find(c => c.name === 'ai').usages) {
+      assert(command.usage_hint.includes(['ai',usage.args].filter(Boolean).join(' ')));
+      assert(controlHelp(command.command).includes(`${command.command} ai${usage.args ? ` ${usage.args}` : ''}`));
+    }
+    assert(!command.usage_hint.includes('PRESET_ID'));
+    assert(!controlHelp(command.command).includes(`${command.command} status`));
   }
   assert.equal(slashCommandFor('Ez'),'/ez');
   assert.throws(()=>slashCommandFor('  '));assert.throws(()=>slashCommandFor('A'.repeat(29)));

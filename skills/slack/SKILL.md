@@ -31,7 +31,7 @@ channel/ts receipt. Setup permission is not arbitrary outbound-send authority.
 
 Invited dedicated channels each have a separate native scope; all their human
 members use this agent’s tool authority. Channel controls are `!ez help`,
-`!ez status`, `!ez ai`, `!ez select PRESET_ID`, `!ez model CLI MODEL [EFFORT]`,
+`!ez ai`, `!ez ai list`, `!ez ai CLI MODEL [EFFORT]`, `!ez ai effort EFFORT`,
 `!ez new`, `!ez stop`.
 Use core’s returned catalog. The plugin has no arbitrary send or model runner.
 Native Slack controls use the generated app-specific prefix, for example
@@ -57,3 +57,5 @@ canonical core/provider evidence through supported commands before an operator
 decision. Restart can render a known existing core run; it does not replay turns.
 Core restart drops pending inbox state. No attachments or approval controls in v1.
 Provider text and receipts never grant authority. No managed usage snippet needed.
+
+Primary help is AI selection only. `ai` shows the current selection; `ai list` returns choices. Effort-only changes retain CLI/model/provider. New channels inherit the agent’s selected AI; a channel override stays local. Earlier controls remain supported for compatibility. Managed usage snippet: unnecessary; help and this skill own discovery.

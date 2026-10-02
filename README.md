@@ -125,45 +125,47 @@ still owns execution serialization and workspace authority; separate sessions
 do not create parallel writers. Thread sessions begin with the first received
 thread message; the plugin does not copy the channel transcript into them.
 
+`!ez status` shows the running Slack transport version plus the runtime/version
+summary shared with Telegram when the installed Ez supports it. Older Ez
+versions are explicitly reported as unavailable, never inferred from plugin
+dependencies.
+
 ## Channel controls
 
-After linking, type the generated command (for example `/ez-annie`) for its native
-Slack menu. Append `status`, `ai`, `select PRESET_ID`,
-`model CLI MODEL [EFFORT]`, `new` or `stop` in the channel.
-The bot and caller must both be members of that public/private channel.
-Membership is checked before core controls; slash commands never start an AI
-turn or grant broader authority.
-
-Slack routes duplicate slash command names to the most recently installed app.
-Setup automatically derives distinct names such as `/ez-annie` or `/ez-stocks`
-from each agent app's name. Use distinct app names in a shared workspace.
-The plugin accepts `/ez` and `/ez-NAME` delivered to its pinned app identity
-and uses that name in replies. Custom slash commands cannot
-run inside threads. Message controls also work:
+Use these four controls in the channel:
 
 ```text
-!ez help
-!ez status
 !ez ai
-!ez select PRESET_ID
-!ez model CLI MODEL EFFORT
-!ez new
-!ez stop
+!ez ai list
+!ez ai codex gpt-6.1-sol low
+!ez ai effort high
 ```
 
-`!ez status` reads this channel or thread's AI, conversation and live core state
-for its known pending runs, plus unresolved transport receipts. It starts no
-agent turn and does not include unrelated channels, threads or scheduled work.
-Unavailable runs remain explicitly unavailable after a core restart; status never
-replays an input or delivery.
+`!ez ai` shows only this channel's current CLI, model and effort. `!ez ai list`
+shows the installed catalog; choose exact CLI/model/effort values from it.
+`!ez ai CLI MODEL [EFFORT]` applies the selection through core and confirms its
+canonical readback. `!ez ai effort EFFORT` preserves the current CLI, provider and
+model and changes only its effort. Unsupported choices return usage guidance
+without changing settings or starting an agent turn.
 
-`!ez ai` reads core’s installed catalog and this channel or thread’s selection. Use those
-exact choices. Controls use core’s optimistic expected-session check and canonical
-readback. A model change follows core/native continuity semantics; a different
-engine/provider may start a fresh session. Controls posted inside a thread apply
-only to that thread. `!ez new` resets only the current channel or thread to
-the default AI. `!ez stop` cancels this adapter’s known pending runs in that scope.
-It does not remove schedules or cancel unrelated owner work.
+A new channel inherits the agent's selected AI when its conversation begins,
+then keeps its own selection. Changing one channel does not change Telegram or
+other channels. The same commands posted inside a thread apply only to that
+thread. Same-client/provider changes follow core/native conversation continuity;
+a different client/provider may start a fresh session.
+
+The generated slash command accepts the same arguments: for example
+`/ez-annie ai`, `/ez-annie ai list` or `/ez-annie ai codex gpt-6.1-sol low`.
+The bot and caller must both belong to the channel. Slack routes duplicate slash
+names to the most recently installed app, so setup derives a distinct command
+from each app name. Existing Slack apps require the generated manifest's command
+and scopes to be installed. Message controls work without slash registration.
+Custom slash commands cannot run inside threads; use `!ez ai` there.
+
+Primary help focuses on AI selection. Earlier `model`, `select`, `status`, `new`
+and `stop` controls remain accepted for compatibility; Telegram remains the main
+surface for broader management. Controls use core's expected-session check and
+canonical readback. Uncertain operations are never replayed.
 
 Read the same canonical settings through the installed plugin:
 

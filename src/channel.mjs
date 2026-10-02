@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+// Capture the loaded revision; an upgrade must not relabel an old process.
+const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
 import { controls as controlCommands, controlHelp } from './commands.mjs';
@@ -125,28 +129,37 @@ export class Channel {
         return run.status;
       }));
       const count = status => results.filter(r => r.status === 'fulfilled' && r.value === status).length;
-      return [`This ${place}`,
+      return ['System', ...(controls.software ?? ['Runtime versions unavailable; upgrade Ez.']),
+        `Slack transport: v${version}`, '', `This ${place}`,
         `AI: ${presetText(selectedPreset(controls))}`,
         `Conversation: ${controls.activeSessionId ?? 'new'}`,
         `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
         `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue || unresolvedSend(r)).length} receipts need attention`].join('\n');
     }
     if (command === 'ai' && !args.length) {
-      return [`Current: ${presetText(selectedPreset(controls))}; conversation: ${controls.activeSessionId ?? 'new'}`,
-        'Presets:', ...(controls.ai?.presets ?? []).map(p => `${p.id}: ${presetText(p)}`),
-        'Models:', ...(controls.models ?? []).map(m => `${m.cli} ${m.model} [${m.efforts.join(', ')}]`)].join('\n');
+      return `This ${place}: ${presetText(selectedPreset(controls))}. Use !ez ai list for choices.`;
+    }
+    if (command === 'ai' && args.length === 1 && args[0] === 'list') {
+      return ['Available AIs:', ...(controls.models ?? []).map(m =>
+        `${m.cli} ${m.model ?? '(client default)'}${m.efforts.length ? ` — effort: ${m.efforts.join(', ')}` : ''}`),
+        'Set: !ez ai CLI MODEL [EFFORT]. Change effort: !ez ai effort EFFORT.'].join('\n');
     }
     let action;
     if (command === 'new' && !args.length) action = { action: 'new' };
     else if (command === 'select' && args.length === 1) action = { action: 'select', presetId: args[0] };
-    else if (command === 'model' && [2, 3].includes(args.length)) {
+    else if (command === 'ai' && args.length === 2 && args[0] === 'effort') {
+      const selected = selectedPreset(controls);
+      const model = (controls.models ?? []).find(m => m.cli === selected?.cli && m.provider === selected?.provider && m.model === selected?.model);
+      if (!model || !model.efforts.includes(args[1])) return 'Choose an effort supported by the current model from !ez ai list.';
+      action = { action: 'model', cli: model.cli, provider: model.provider, model: model.model, effort: args[1] };
+    } else if ((command === 'ai' || command === 'model') && [2, 3].includes(args.length)) {
       const candidates = (controls.models ?? []).filter(m => m.cli === args[0] && m.model === args[1]);
-      if (candidates.length !== 1 || (args[2] && !candidates[0].efforts.includes(args[2]))) throw Error('Choose a model and effort from !ez ai');
+      if (candidates.length !== 1 || (args[2] && !candidates[0].efforts.includes(args[2]))) return 'Choose a CLI, model and supported effort from !ez ai list.';
       const m = candidates[0]; action = { action: 'model', cli: m.cli, provider: m.provider, model: m.model, ...(args[2] ? { effort: args[2] } : {}) };
-    } else return 'Unknown control. Use !ez help.';
+    } else return 'Use !ez ai, !ez ai list, !ez ai CLI MODEL [EFFORT], or !ez ai effort EFFORT.';
     await this.core(path, { ...action, expectedSession: controls.activeSessionId });
     const readback = await this.core(path);
-    return `This ${place}: ${presetText(selectedPreset(readback))}; conversation: ${readback.activeSessionId}`;
+    return `This ${place}: ${presetText(selectedPreset(readback))}.`;
   }
   async deliver(receipt, messageId, text) {
     const parts = chunks(text);

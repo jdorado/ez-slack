@@ -56,9 +56,9 @@ test('native slash controls acknowledge durable input before membership checks, 
   assert.equal(checks,1);assert.equal(f.calls.filter(c=>c.body?.action).length,1);
   assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
   assert.match(f.sends[0].text,/model-b \/ medium/);
-  await f.agent.receiveSlash(slash(2));assert.match(f.sends.at(-1).text,/\/ez status/);
+  await f.agent.receiveSlash(slash(2));assert.match(f.sends.at(-1).text,/\/ez ai list/);
   await f.agent.receiveSlash(slash(3,'unknown'));assert.match(f.sends.at(-1).text,/\/ez help/);
-  await f.agent.receiveSlash({...slash(4),command:'/ez-annie'});assert.match(f.sends.at(-1).text,/\/ez-annie status/);
+  await f.agent.receiveSlash({...slash(4),command:'/ez-annie'});assert.match(f.sends.at(-1).text,/\/ez-annie ai list/);
   assert.equal(f.runs.size,0);
   await assert.rejects(f.agent.receiveSlash({...slash(1,'new')}),/Slack event ID reused/);
 });
@@ -152,7 +152,7 @@ test('channel-local model/effort controls use exact catalog and canonical readba
 test('status reads live work and AI only in the requested channel or thread without mutations', async t => {
   for (const root of [undefined, '1234567.111111']) {
     const f=await fixture(t), scope=scopeFor(identity.teamId,'C123456',root);
-    f.settings.set(scope,{activeSessionId:'session-current',ai:{selectedId:'choice',presets:[{id:'choice',cli:'codex',model:'model-b',effort:'medium'}]}});
+    f.settings.set(scope,{software:['Relay: running · v0.1.0-beta.46','Host transport: running · v0.1.0-beta.46','Plugins: slack 0.1.0-beta.2.rc.7'],activeSessionId:'session-current',ai:{selectedId:'choice',presets:[{id:'choice',cli:'codex',model:'model-b',effort:'medium'}]}});
     for (const [n,status] of [[1,'running'],[2,'queued'],[3,'completed']]) {
       const id=`r_app_${String(n).padStart(64,'0')}`;
       f.runs.set(id,{id,scope,status});
@@ -162,6 +162,8 @@ test('status reads live work and AI only in the requested channel or thread with
       await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',scope:otherScope,runId:'unrelated',uncertain:true}));
     }
     await f.agent.receive(event(10,'!ez status','C123456',root));
+    assert.match(f.sends[0].text,/System\nRelay: running · v0.1.0-beta.46\nHost transport: running · v0.1.0-beta.46/);
+    assert.match(f.sends[0].text,/Slack transport: v/);
     assert.match(f.sends[0].text,/AI: codex \/ model-b \/ medium\nConversation: session-current/);
     assert.match(f.sends[0].text,/Work: 1 running; 1 queued; 1 finished awaiting delivery; 0 unavailable/);
     assert.match(f.sends[0].text,/Transport: 0 unconfirmed inputs; 0 receipts need attention/);
@@ -186,12 +188,12 @@ test('status exposes unavailable or mismatched runs and uncertain input without 
   assert(f.calls.every(c=>c.body === undefined));assert.equal(f.settings.size,0);
   assert.equal((await f.receipts.load()).find(r=>r.key==='uncertain').uncertain,true);
 });
-test('status in an unused channel creates no native conversation and help lists it', async t => {
+test('status in an unused channel creates no native conversation and primary help focuses on AI', async t => {
   const f=await fixture(t);
   await f.agent.receive(event(1,'!ez status'));await f.agent.receive(event(2,'!ez help'));
   assert.match(f.sends[0].text,/Conversation: new/);
   assert.match(f.sends[0].text,/0 running; 0 queued; 0 finished awaiting delivery; 0 unavailable/);
-  assert.match(f.sends[1].text,/!ez status/);
+  assert.match(f.sends[1].text,/!ez ai list/);
   assert.equal(f.calls.length,1);assert.equal(f.settings.size,0);assert.equal(f.runs.size,0);
 });
 test('thread controls change only that thread, render there, and cancel only its pending runs', async t => {
@@ -239,4 +241,46 @@ test('mutating controls with a lost response are not repeated', async t => {
   const f=await fixture(t,{call:async(path,body)=>{if(body)throw Error('Lost control');return {activeSessionId:null,models:[],ai:{presets:[]}};}});
   await f.agent.receive(event(1,'!ez new'));await f.agent.receive(event(1,'!ez new'));
   assert.equal(f.calls.filter(c=>c.body).length,1);assert.equal(f.sends.length,1);assert(f.sends[0].text.includes('not confirmed'));
+});
+
+
+test('AI controls show a concise selection and list catalog choices separately', async t => {
+  const f = await fixture(t);
+  await f.agent.receive(event(1, '!ez ai'));
+  assert.equal(f.sends[0].text, 'This channel: codex / model-a / low. Use !ez ai list for choices.');
+  assert(!f.sends[0].text.includes('Presets:'));
+  await f.agent.receive(event(2, '!ez ai list'));
+  assert.match(f.sends[1].text, /codex model-b — effort: low, medium/);
+  assert.equal(f.calls.filter(c => c.body).length, 0);
+  assert.equal(f.runs.size, 0);
+});
+
+test('AI selection and effort-only changes preserve provider/model and stay scoped', async t => {
+  const f = await fixture(t), root = '1234567.111111';
+  await f.agent.receive(event(1, '!ez ai codex model-b medium', 'C123456', root));
+  await f.agent.receive(event(2, '!ez ai effort low', 'C123456', root));
+  const writes = f.calls.filter(c => c.body?.action);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes[1].body, {action:'model',cli:'codex',provider:'openai',model:'model-b',effort:'low',expectedSession:`session-${scopeFor(identity.teamId,'C123456',root)}`});
+  assert.equal(f.sends[1].text, 'This thread: codex / model-b / low.');
+  await f.agent.receive(event(3, '!ez ai'));
+  await f.agent.receive(event(4, '!ez ai', 'C654321'));
+  assert(f.sends.slice(2).every(s => s.text.includes('model-a / low')));
+  assert.equal(f.settings.size, 1);
+  const resumed = new Channel({...f.agent, receipts:f.receipts});
+  t.after(() => resumed.close());
+  await resumed.receive(event(5, '!ez ai', 'C123456', root));
+  assert.match(f.sends.at(-1).text, /model-b \/ low/);
+  assert.equal(f.runs.size, 0);
+});
+
+test('unsupported AI choices and efforts explain usage without changing settings', async t => {
+  const f = await fixture(t);
+  for (const [n,text] of [[1,'!ez ai codex invented low'],[2,'!ez ai codex model-a ultra'],[3,'!ez ai effort ultra'],[4,'!ez ai invalid'],[5,'!ez ai effort low extra']]) {
+    await f.agent.receive(event(n,text));
+    assert.match(f.sends.at(-1).text, /!ez ai/);
+  }
+  assert.equal(f.calls.filter(c => c.body?.action).length, 0);
+  assert.equal(f.runs.size, 0);
+  assert.equal((await f.receipts.load()).length, 5);
 });

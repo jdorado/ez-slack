@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0-beta.2 (candidate)
+## 0.1.0-beta.2
+
+- Show the loaded Slack transport revision and Ez runtime/version summary in `!ez status`.
+
+- Simplify channel/thread AI controls to `ai`, `ai list`, `ai CLI MODEL [EFFORT]` and `ai effort EFFORT`. Show concise canonical selections, preserve CLI/model/provider for effort-only changes, and keep new-channel inheritance unchanged. Previous controls remain accepted but are omitted from primary help.
 
 - Include native Slack controls by default in the generated linking manifest, with an app-specific command name derived from its name. One plugin command registry owns setup, registration hints and help; `slack manifest --name NAME` returns the same manifest offline.
 - Read channel/thread status from canonical settings, live pending runs and durable transport receipts without creating a native turn.
