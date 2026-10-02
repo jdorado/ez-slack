@@ -4,7 +4,7 @@ Read AGENTS.md and [the core plugin author guide](https://github.com/jdorado/ez-
 
 1. Inspect status, ignored files, worktrees and open PRs. Preserve unrelated work. Create one focused branch/worktree from fetched main for active edits.
 2. State the user outcome, at most five binding constraints, owning component, smallest path, real proof and stop condition. Prefer an existing contract or subtraction.
-3. Use Node 22+ and pnpm 10.30.3. Run `pnpm install --frozen-lockfile`, `pnpm verify`, `npm run release:check` and `git diff --check`. Keep `pnpm-lock.yaml` and `docker/pnpm-lock.yaml` identical.
+3. Use Node 22+ and pnpm 10.30.3. Run `pnpm install --frozen-lockfile`, `pnpm verify`, `pnpm run release:check` and `git diff --check`. Keep `pnpm-lock.yaml` and `docker/pnpm-lock.yaml` identical.
 4. Commit, push and open a PR before installing a QA candidate. Run `pnpm smoke:docker` through the real manager from the exact clean PR commit. Source candidates use an increasing `X.Y.Z-beta.N.rc.M` version; never overwrite a version or artifact.
 5. Obtain one independent human or agent final-head review and green CI. Inspect correctness, ownership, credentials, negative authority cases and uncertain writes. Fix material findings in the same PR and refresh affected evidence.
 6. Verify one authorized installed-plugin/native-agent exchange and its matching provider receipt. Routine tests use synthetic channels and accounts. Health alone is not delivery proof. Never put credentials or conversation dumps in public evidence.

@@ -8,7 +8,7 @@ No model calls, transcript mirrors, workflow decisions or competing execution qu
 Use a focused branch/worktree/PR and preserve unrelated work. Before substantive
 edits state objective, at most five constraints, owner, smallest path, real proof
 and stop condition. Read CONTRIBUTING.md. Verify with `pnpm verify`,
-`npm run release:check`, `git diff --check`, Docker/manager smoke and a real
+`pnpm run release:check`, `git diff --check`, Docker/manager smoke and a real
 installed-plugin/native-agent channel exchange. Green health is not live proof.
 Obtain an independent final-head review before merge; resolve material findings.
 Publication and live external messaging need explicit authority. Private source

@@ -17,6 +17,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
-      - run: npm run release:check
+      - run: pnpm run release:check
       - run: git diff --check
       - run: docker build --target test -t ez-slack:test .

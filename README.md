@@ -30,7 +30,7 @@ Developer checks run in the source checkout:
 ```sh
 pnpm install --frozen-lockfile
 pnpm verify
-npm run release:check
+pnpm run release:check
 ez plugins inspect slack --source /absolute/ez-slack
 ez plugins install slack --source /absolute/ez-slack --revision sha256:INSPECTED_HASH
 ez plugins start slack
@@ -222,7 +222,7 @@ app in Slack. Changing workspace/app identity needs a separate installation.
 
 ```sh
 pnpm verify
-npm run release:check
+pnpm run release:check
 pnpm smoke:docker
 ```
 
