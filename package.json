@@ -30,7 +30,8 @@
     "CONTRIBUTING.md",
     "SECURITY.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "pnpm-workspace.yaml"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
