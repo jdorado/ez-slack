@@ -63,7 +63,7 @@ test('linking defaults and offline CLI derive the same native menu from the cont
     assert.equal(command.command,slashCommandFor(name));
     assert.equal(m.features.bot_user.display_name,name);
     assert.equal(m.settings.socket_mode_enabled,true);
-    assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read']);
+    assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read','files:read']);
     for(const usage of controls.find(c => c.name === 'ai').usages) {
       assert(command.usage_hint.includes(['ai',usage.args].filter(Boolean).join(' ')));
       assert(controlHelp(command.command).includes(`${command.command} ai${usage.args ? ` ${usage.args}` : ''}`));
@@ -149,4 +149,22 @@ test('unconfigured service is inert, rejects a second service and restarts witho
   const d=await dir(t);let created=0;const s=await serve(d,{createSocket:()=>{created++;throw Error('No provider before setup');}});
   assert.equal((await rpc(d,'health')).issue,'setup_required');assert.equal(created,0);await assert.rejects(serve(d),/already running/);
   await s.close();const restarted=await serve(d);assert.equal((await rpc(d,'health')).healthy,true);await restarted.close();
+});
+
+test('private attachment download authenticates only Slack hosted URLs and bounds bytes', async()=>{
+  const bytes=Buffer.from('%PDF-synthetic');
+  const file={id:'F123456',mode:'hosted',name:'proof.pdf',size:bytes.length,url_private:'https://files.slack.com/files-pri/T123456-F123456/proof.pdf'};
+  let calls=0;
+  const make=(alter={},body=bytes)=>new Slack('synthetic',async(url,args)=>{
+    calls++;assert.equal(args.headers.authorization,'Bearer synthetic');assert.equal(args.redirect,'error');
+    if(new URL(url).pathname==='/api/files.info') return Response.json({ok:true,file:{...file,...alter}});
+    return new Response(body);
+  });
+  assert.deepEqual(await make().attachment(file.id),{name:file.name,data:bytes.toString('base64')});
+  for(const alter of [{id:'F654321'},{size:10*1024*1024+1},{mode:'external'},{url_private:'https://evil.invalid/files-pri/x'},{url_private:'https://files.slack.com@evil.invalid/files-pri/x'},{url_private:'http://files.slack.com/files-pri/x'}]) {
+    const before=calls;await assert.rejects(make(alter).attachment(file.id));assert.equal(calls,before+1);
+  }
+  await assert.rejects(make({},Buffer.from('not a PDF')).attachment(file.id));
+  await assert.rejects(make({size:1}).attachment(file.id),/size mismatch/);
+  await assert.rejects(make({},Buffer.alloc(10*1024*1024+1)).attachment(file.id),/Oversized/);
 });

@@ -1,3 +1,7 @@
+# 0.1.0-beta.3.rc.1
+
+- Accept one inbound Slack attachment through the shared core staging path, preserving captions and thread scope. Authenticate bounded private downloads; reject unsupported/multiple files without native admission. Add files:read to the setup manifest.
+
 # Changelog
 
 ## 0.1.0-beta.2

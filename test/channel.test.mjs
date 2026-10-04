@@ -284,3 +284,25 @@ test('unsupported AI choices and efforts explain usage without changing settings
   assert.equal(f.runs.size, 0);
   assert.equal((await f.receipts.load()).length, 5);
 });
+
+test('file-only and captioned messages use one core attachment admission and retain thread scope', async t => {
+  const f=await fixture(t); let downloads=0;
+  f.agent.slack.attachment=async id=>{downloads++;assert.equal(id,'F123456');return {name:'proof.pdf',data:Buffer.from('%PDF-proof').toString('base64')};};
+  const p=event(81,'','C123456','123.456');p.event.subtype='file_share';p.event.files=[{id:'F123456'}];
+  await f.agent.receive(p);await f.agent.receive(p);await settled(f.agent);
+  const body=f.calls.find(c=>c.path==='/v1/runs').body;
+  assert.equal(body.text,'');assert.equal(body.scope,scopeFor(identity.teamId,'C123456','123.456'));
+  assert.equal(body.attachment.name,'proof.pdf');assert.equal(downloads,1);
+  const caption=event(82,'Read this');caption.event.files=[{id:'F123456'}];await f.agent.receive(caption);await settled(f.agent);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').at(-1).body.text,'Read this');
+  await assert.rejects(f.agent.receive({...caption,event:{...caption.event,files:[{id:'F654321'}]}}),/event ID reused/);
+});
+test('multiple files and unavailable attachments get explicit replies without native admission', async t => {
+  const f=await fixture(t);let downloads=0;
+  f.agent.slack.attachment=async()=>{downloads++;throw Object.assign(Error('missing scope'),{providerCode:'missing_scope'});};
+  const p=event(83,'');p.event.files=[{id:'F123456'},{id:'F654321'}];await f.agent.receive(p);
+  assert.equal(downloads,0);assert.match(f.sends[0].text,/one attachment/);
+  p.event_id='Ev1234584';p.event.files.pop();await f.agent.receive(p);
+  assert.equal(downloads,1);assert.match(f.sends[1].text,/files:read/);
+  assert.equal(f.calls.length,0);assert.equal((await f.receipts.load()).at(-1).providerIssue,'missing_scope');
+});

@@ -12,14 +12,16 @@ export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${
 export function incoming(payload, identity) {
   const e = payload?.event;
   if (payload?.type !== 'event_callback' || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
-      !/^Ev[A-Za-z0-9]{5,80}$/.test(payload.event_id ?? '') || e?.type !== 'message' || e.subtype || e.bot_id ||
+      !/^Ev[A-Za-z0-9]{5,80}$/.test(payload.event_id ?? '') || e?.type !== 'message' || (e.subtype && e.subtype !== 'file_share') || e.bot_id ||
       !/^[UW][A-Z0-9]{5,40}$/.test(e.user ?? '') || e.user === identity.botUserId ||
       !/^[CG][A-Z0-9]{5,40}$/.test(e.channel ?? '') || !['channel', 'group'].includes(e.channel_type) ||
-      typeof e.text !== 'string' || !e.text.trim() || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '') ||
+      typeof e.text !== 'string' || (!e.text.trim() && !e.files?.length) || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '') ||
       (e.thread_ts !== undefined && !validThreadTs(e.thread_ts))) return null;
+  if (e.files !== undefined && (!Array.isArray(e.files) || !e.files.length || e.files.length > 20 || e.files.some(f => !/^F[A-Z0-9]{5,40}$/.test(f?.id ?? '')))) return null;
+  const files = e.files?.map(f => f.id);
   return { key: `${payload.team_id}:${payload.event_id}`, requestId: `${payload.team_id}:${payload.event_id}`, channel: e.channel,
     scope: scopeFor(payload.team_id, e.channel, e.thread_ts), ...(e.thread_ts === undefined ? {} : {threadTs: e.thread_ts}),
-    text: e.text, inputHash: hash(e.text) };
+    text: e.text, ...(files ? {files} : {}), inputHash: hash(files ? JSON.stringify([e.text, files]) : e.text) };
 }
 export function slashIncoming(payload, identity) {
   if (!/^\/ez(?:-[a-z0-9_-]{1,32})?$/.test(payload?.command ?? '') || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
@@ -79,7 +81,7 @@ export class Channel {
           return { ignored: true };
         }
       }
-      if (input.text.trim().startsWith('!ez')) {
+      if (!input.files && input.text.trim().startsWith('!ez')) {
         // Control mutations are deliberate, once-only UI operations; never replay after uncertainty.
         let text;
         try { text = await this.control(input); }
@@ -88,8 +90,19 @@ export class Channel {
         await this.deliver(receipt, 'control', text);
         await this.receipts.change(input.key, r => { r.closed = true; });
       } else {
+        let attachment;
+        if (input.files) {
+          try {
+            if (input.files.length !== 1) throw Error('Send one attachment per message.');
+            attachment = await this.slack.attachment(input.files[0]);
+          } catch (e) {
+            await this.receipts.change(input.key, r => { r.issue = 'attachment_rejected'; if (/^[a-z_]{1,80}$/.test(e.providerCode ?? '')) r.providerIssue = e.providerCode; r.closed = true; });
+            await this.deliver(receipt, 'attachment-rejected', input.files.length !== 1 ? 'Send one attachment per message.' : 'Attachment could not be read. Use a PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB. The Slack app also needs files:read permission.');
+            return { rejected: true };
+          }
+        }
         let run;
-        try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: input.text }); }
+        try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: input.text, ...(attachment ? {attachment} : {}) }); }
         catch (e) {
           await this.receipts.change(input.key, r => { r.uncertain = e.admitted !== false; if (e.runId) r.runId = e.runId; r.issue = 'admission_unconfirmed'; });
           throw e;
