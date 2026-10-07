@@ -18,13 +18,16 @@ export async function serve(directory, { createSocket = options => new SocketMod
   catch (e) { if (!['ENOENT', 'ECONNREFUSED'].includes(e.code)) throw e; }
   const socketPath = join(directory, 'slack.sock');
   let socket, channel, identity, bound, connected = false, issue = null;
+  let startupStage = 'configuration';
   const receipts = new Receipts(directory);
   const logger = { debug() {}, info() {}, warn() {}, error() {}, getLevel() { return 'error'; }, setLevel() {}, setName() {} };
   try {
     await unlink(socketPath).catch(e => { if (e.code !== 'ENOENT') throw e; });
     try {
       bound = await connection(directory); identity = await slackConfig(directory);
+      startupStage = 'core_registration';
       await applicationCall('/v1/registration', undefined, bound);
+      startupStage = 'slack_identity';
       const slack = new Slack(identity.botToken);
       const who = await slack.call('auth.test');
       if (who.team_id !== identity.teamId || who.user_id !== identity.botUserId || !who.bot_id) throw Error('Slack identity changed');
@@ -37,9 +40,16 @@ export async function serve(directory, { createSocket = options => new SocketMod
         const work = type === 'slash_commands' ? channel.receiveSlash(body, ack) : channel.receive(body, ack);
         void work.catch(() => { issue = 'channel_operation_failed'; });
       });
+      startupStage = 'socket_start';
       await socket.start();
+      startupStage = 'delivery_resume';
       await channel.resumeDelivery();
-    } catch (e) { issue = e.code === 'ENOENT' ? 'setup_required' : 'connection_unavailable'; }
+    } catch (e) {
+      if (startupStage === 'configuration' && e.code === 'ENOENT') issue = 'setup_required';
+      // Let the existing service supervisor recover configured startup failures.
+      // Never expose provider errors: they may contain tokens or private URLs.
+      else throw Error(`Slack startup failed at ${startupStage}`);
+    }
     const server = http.createServer(async (req, res) => {
       const respond = (status, value) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify(value)); };
       try {

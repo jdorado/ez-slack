@@ -205,7 +205,7 @@ design. Native sessions/settings remain in core; stranded transport records need
 operator investigation, not an automated turn replay. `receipts` identifies
 uncertainty; reconnect/start does not prove recovery. No blind provider retries.
 
-Supports text, channel controls and one inbound PDF, JPEG/PNG/WebP image, or text/Markdown attachment per message (10 MiB maximum), through core’s shared Telegram/application staging path. Existing Slack apps must add `files:read` and reinstall the app. Remote files and multiple attachments are rejected explicitly. No outbound attachments, reactions, approval buttons,
+Supports text, channel controls and one inbound PDF, JPEG/PNG/WebP image, or text/Markdown attachment per message (10 MiB maximum), through core’s shared Telegram/application staging path. Existing Slack apps must add `files:read` and reinstall the app. Remote files and multiple attachments are rejected explicitly. A file caption starting with `!ez` is an ordinary prompt for the agent, not a channel control; send controls as text-only messages. Temporary Slack failures while fetching a file get a "please resend" reply and are recorded as `attachment_unavailable`; an input interrupted mid-download stays visible as `attachment_pending` (unconfirmed) and is not replayed. No outbound attachments, reactions, approval buttons,
 DMs, agent-to-agent channels or automatic schedule-result discovery. A pending
 core approval is reported without inferring consent; cancel and use an existing
 supported owner surface when necessary. Slack app-token reconnects cannot be used

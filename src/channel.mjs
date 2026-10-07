@@ -92,14 +92,26 @@ export class Channel {
       } else {
         let attachment;
         if (input.files) {
-          try {
-            if (input.files.length !== 1) throw Error('Send one attachment per message.');
-            attachment = await this.slack.attachment(input.files[0]);
-          } catch (e) {
-            await this.receipts.change(input.key, r => { r.issue = 'attachment_rejected'; if (/^[a-z_]{1,80}$/.test(e.providerCode ?? '')) r.providerIssue = e.providerCode; r.closed = true; });
-            await this.deliver(receipt, 'attachment-rejected', input.files.length !== 1 ? 'Send one attachment per message.' : 'Attachment could not be read. Use a PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB. The Slack app also needs files:read permission.');
+          if (input.files.length !== 1) {
+            await this.receipts.change(input.key, r => { r.issue = 'attachment_rejected'; r.closed = true; });
+            await this.deliver(receipt, 'attachment-rejected', 'Send one attachment per message.');
             return { rejected: true };
           }
+          // Durable marker before the download: a crash here must leave a visible unconfirmed input, never a silent loss.
+          await this.receipts.change(input.key, r => { r.issue = 'attachment_pending'; r.uncertain = true; });
+          try { attachment = await this.slack.attachment(input.files[0]); }
+          catch (e) {
+            const transient = e.transient === true;
+            await this.receipts.change(input.key, r => {
+              r.issue = transient ? 'attachment_unavailable' : 'attachment_rejected'; r.uncertain = false;
+              if (/^[a-z_]{1,80}$/.test(e.providerCode ?? '')) r.providerIssue = e.providerCode; r.closed = true;
+            });
+            await this.deliver(receipt, 'attachment-rejected', transient
+              ? 'Attachment could not be fetched right now (temporary Slack problem). Please resend it in a moment.'
+              : 'Attachment could not be read. Use a PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB. The Slack app also needs files:read permission.');
+            return { rejected: true };
+          }
+          await this.receipts.change(input.key, r => { delete r.issue; r.uncertain = false; });
         }
         let run;
         try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: input.text, ...(attachment ? {attachment} : {}) }); }
