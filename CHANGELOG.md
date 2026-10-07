@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-beta.3.rc.1
+
+- Exit configured startup failures so the existing service supervisor can recover, rather than leaving Slack permanently disconnected behind healthy IPC. Report only a fixed startup stage, without provider error details or tokens. Missing initial configuration remains inert for setup.
+
 ## 0.1.0-beta.2
 
 - Show the loaded Slack transport revision and Ez runtime/version summary in `!ez status`.
