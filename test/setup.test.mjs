@@ -150,3 +150,37 @@ test('unconfigured service is inert, rejects a second service and restarts witho
   assert.equal((await rpc(d,'health')).issue,'setup_required');assert.equal(created,0);await assert.rejects(serve(d),/already running/);
   await s.close();const restarted=await serve(d);assert.equal((await rpc(d,'health')).healthy,true);await restarted.close();
 });
+
+for (const stage of ['core_registration','slack_identity','socket_start','delivery_resume']) test(`configured ${stage} failure exits cleanly for supervisor recovery without leaking provider detail`,async t=>{
+  const d=await dir(t);let failed=true, disconnected=0, created=0;
+  const core=http.createServer((req,res)=>{
+    res.setHeader('content-type','application/json');
+    res.writeHead(failed&&stage==='core_registration'?503:200);
+    res.end(JSON.stringify({bindingId:'synthetic',error:'SYNTHETIC_PRIVATE_DETAIL'}));
+  });
+  await new Promise(resolve=>core.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>core.close(resolve)));
+  await saveConnection(d,{url:`http://127.0.0.1:${core.address().port}`,token:'a'.repeat(43),privateHttp:true});
+  await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}:{url:'wss://synthetic'}});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,args)=>String(url)==='https://slack.com/api/auth.test'
+    ? Response.json(failed&&stage==='slack_identity'?{ok:false,error:'SYNTHETIC_PRIVATE_DETAIL'}:{ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'})
+    : originalFetch(url,args);
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const createSocket=()=>{
+    created++;const socket=new EventEmitter();
+    socket.start=async()=>{if(failed&&stage==='socket_start')throw Error('SYNTHETIC_PRIVATE_DETAIL');socket.emit('connected');};
+    socket.disconnect=async()=>{disconnected++;};return socket;
+  };
+  const { writeFile }=await import('node:fs/promises');
+  if(stage==='delivery_resume')await writeFile(join(d,'receipts.json'),'SYNTHETIC_PRIVATE_DETAIL');
+  await assert.rejects(serve(d,{createSocket}),error=>{
+    assert.equal(error.message,`Slack startup failed at ${stage}`);
+    assert(!String(error.stack).includes('SYNTHETIC_PRIVATE_DETAIL'));return true;
+  });
+  assert.equal(disconnected,created);
+  await assert.rejects(stat(join(d,'slack.sock')),error=>error.code==='ENOENT');
+  if(stage==='delivery_resume')await rm(join(d,'receipts.json'));
+  failed=false;
+  const recovered=await serve(d,{createSocket});t.after(()=>recovered.close());
+  assert.deepEqual(await rpc(d,'health'),{healthy:true,configured:true,connected:true,issue:null});
+});
