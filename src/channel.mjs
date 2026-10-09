@@ -37,7 +37,7 @@ export function chunks(text) {
   if (part) result.push(part);
   return result;
 }
-const presetText = p => p ? [p.cli, p.model, p.effort].filter(Boolean).join(' / ') : 'Default AI';
+const presetText = p => p ? [`${p.cli}${p.authProfile ? `@${p.authProfile}` : ''}`, p.model, p.effort].filter(Boolean).join(' / ') : 'Default AI';
 const selectedPreset = c => c.ai?.presets?.find(p => p.id === c.ai.selectedId);
 export class Channel {
   constructor({ identity, connection, receipts, slack, call = applicationCall }) {
@@ -141,7 +141,7 @@ export class Channel {
     }
     if (command === 'ai' && args.length === 1 && args[0] === 'list') {
       return ['Available AIs:', ...(controls.models ?? []).map(m =>
-        `${m.cli} ${m.model ?? '(client default)'}${m.efforts.length ? ` — effort: ${m.efforts.join(', ')}` : ''}`),
+        `${m.cli}${m.authProfile ? `@${m.authProfile}` : ''} ${m.model ?? '(client default)'}${m.provider ? ` (${m.provider})` : ''}${m.efforts.length ? ` — effort: ${m.efforts.join(', ')}` : ''}`),
         'Set: !ez ai CLI MODEL [EFFORT]. Change effort: !ez ai effort EFFORT.'].join('\n');
     }
     let action;
@@ -149,13 +149,18 @@ export class Channel {
     else if (command === 'select' && args.length === 1) action = { action: 'select', presetId: args[0] };
     else if (command === 'ai' && args.length === 2 && args[0] === 'effort') {
       const selected = selectedPreset(controls);
-      const model = (controls.models ?? []).find(m => m.cli === selected?.cli && m.provider === selected?.provider && m.model === selected?.model);
+      const model = (controls.models ?? []).find(m => m.cli === selected?.cli && m.authProfile === selected?.authProfile && m.provider === selected?.provider && m.model === selected?.model);
       if (!model || !model.efforts.includes(args[1])) return 'Choose an effort supported by the current model from !ez ai list.';
-      action = { action: 'model', cli: model.cli, provider: model.provider, model: model.model, effort: args[1] };
+      action = { action: 'model', cli: model.cli, ...(model.authProfile ? {authProfile: model.authProfile} : {}), provider: model.provider, model: model.model, effort: args[1] };
     } else if ((command === 'ai' || command === 'model') && [2, 3].includes(args.length)) {
-      const candidates = (controls.models ?? []).filter(m => m.cli === args[0] && m.model === args[1]);
-      if (candidates.length !== 1 || (args[2] && !candidates[0].efforts.includes(args[2]))) return 'Choose a CLI, model and supported effort from !ez ai list.';
-      const m = candidates[0]; action = { action: 'model', cli: m.cli, provider: m.provider, model: m.model, ...(args[2] ? { effort: args[2] } : {}) };
+      const [cli, authProfile, extra] = args[0].split('@');
+      const candidates = (controls.models ?? []).filter(m => m.cli === cli && m.authProfile === authProfile && m.model === args[1]);
+      if (extra !== undefined || authProfile === '') return 'Use CLI@PROFILE from !ez ai list.';
+      if (!candidates.length) return `Model ${args[1]} is not advertised for ${args[0]}. Use !ez ai list; current selection unchanged.`;
+      if (candidates.length !== 1) return `Model ${args[1]} is ambiguous across providers for ${args[0]}. Use !ez ai list; current selection unchanged.`;
+      const m = candidates[0];
+      if (args[2] && !m.efforts.includes(args[2])) return `Effort ${args[2]} is not supported for ${args[0]} ${args[1]}. Supported efforts: ${m.efforts.join(', ') || 'none (omit effort)'}. Use !ez ai list; current selection unchanged.`;
+      action = { action: 'model', cli: m.cli, ...(m.authProfile ? {authProfile: m.authProfile} : {}), provider: m.provider, model: m.model, ...(args[2] ? { effort: args[2] } : {}) };
     } else return 'Use !ez ai, !ez ai list, !ez ai CLI MODEL [EFFORT], or !ez ai effort EFFORT.';
     await this.core(path, { ...action, expectedSession: controls.activeSessionId });
     const readback = await this.core(path);

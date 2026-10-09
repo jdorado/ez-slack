@@ -142,9 +142,9 @@ Use these four controls in the channel:
 ```
 
 `!ez ai` shows only this channel's current CLI, model and effort. `!ez ai list`
-shows the installed catalog; choose exact CLI/model/effort values from it.
+shows the installed catalog; choose exact CLI/model/effort values from it. Use `CLI@PROFILE` for a named login (for example, `!ez ai claude@work sonnet high`); plain `claude` selects the default login.
 `!ez ai CLI MODEL [EFFORT]` applies the selection through core and confirms its
-canonical readback. `!ez ai effort EFFORT` preserves the current CLI, provider and
+canonical readback. `!ez ai effort EFFORT` preserves the current CLI, login, provider and
 model and changes only its effort. Unsupported choices return usage guidance
 without changing settings or starting an agent turn.
 
