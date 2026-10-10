@@ -3,6 +3,7 @@
   "id": "slack",
   "version": "0.1.0-beta.3.rc.2",
   "description": "Slack channel transport with native Ez conversation continuity",
+  "example": "slack settings --channel C0123456789",
   "commands": {
     "slack": {
       "executable": "bin/ez-slack.mjs",
