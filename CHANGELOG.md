@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0-beta.3.rc.2
+## 0.1.0-beta.3
+
+- Requires Ez core 0.1.0-beta.50 or newer for the manifest example.
+  Older cores refuse the update and retain the installed version.
+- Add a representative manifest example for tool discovery.
 
 - Exit configured startup failures so the existing service supervisor can recover, rather than leaving Slack permanently disconnected behind healthy IPC. Report only a fixed startup stage, without provider error details or tokens. Missing initial configuration remains inert for setup.
 - Accept one inbound Slack attachment through the shared core staging path, preserving captions and thread scope. Authenticate bounded private downloads; reject unsupported/multiple files without native admission. Add files:read to the setup manifest.

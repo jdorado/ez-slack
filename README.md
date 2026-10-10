@@ -12,6 +12,9 @@ Ez application-channel API; it does not run models, rebuild prompts, save native
 history, continue tasks or own an execution queue. It polls core run receipts only
 to render replies. Provider reconnect is handled by Slack’s official SDK.
 
+Requires Ez core 0.1.0-beta.50 or newer for the manifest example.
+Older cores refuse the update and retain the installed version.
+
 ## Requirements and installation
 
 Node 22+, Docker, Ez core with private scope controls (published beta.42 client;
@@ -223,7 +226,7 @@ app in Slack. Changing workspace/app identity needs a separate installation.
 ```sh
 pnpm verify
 pnpm run release:check
-pnpm smoke:docker
+EZ_SLACK_TEST_MANAGER=/absolute/reviewed-ez/bin/ezenciel-agents-tools.mjs pnpm smoke:docker
 ```
 
 Docker smoke installs through the real Ez manager, exercises registered CLI,

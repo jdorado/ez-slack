@@ -6,18 +6,18 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { snapshot, init } from '@jc_stack/ez-agents/src/plugins/manager.mjs';
 
 const exec=promisify(execFile);
 const source=resolve(fileURLToPath(new URL('..',import.meta.url)));
-const bin=fileURLToPath(import.meta.resolve('@jc_stack/ez-agents/bin/ezenciel-agents-tools.mjs'));
+const bin=process.env.EZ_SLACK_TEST_MANAGER;
+if(!bin)throw Error('Set EZ_SLACK_TEST_MANAGER to a reviewed Ez beta.50+ manager entrypoint');
 const root=await mkdtemp(join(tmpdir(),'ez-slack-manager-'));
 const home=join(root,'tools'), mind=join(root,'mind');
 const call=async(...args)=>JSON.parse((await exec(process.execPath,[bin,'--home',home,...args],{maxBuffer:4*1024*1024})).stdout);
 let record, setup;
 try {
   await mkdir(mind);await writeFile(join(mind,'AGENTS.md'),'Synthetic owner context.\n');
-  await init(home,mind);
+  JSON.parse((await exec(process.execPath,[bin,'init','--home',home,'--workspace',mind])).stdout);
   // Host-private snapshots retain owner-only permissions in Docker build input.
   const privateSource=join(root,'source');
   await cp(source,privateSource,{recursive:true,filter:file=>!file.split('/').some(part=>part==='node_modules'||part==='.git')});
@@ -30,7 +30,7 @@ try {
     }
   };
   await privateModes(privateSource);
-  const inspected=await snapshot(privateSource);
+  const inspected=await call('plugins','inspect','slack','--source',privateSource);
   const installed=await call('plugins','install','slack','--source',privateSource,'--revision',inspected.revision);
   assert.equal(installed.started,false);
   record=JSON.parse(await readFile(join(home,'registry.json'))).plugins.slack;
