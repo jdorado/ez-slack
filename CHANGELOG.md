@@ -1,8 +1,11 @@
 # Changelog
 
-## 0.1.0-beta.3.rc.1
+## 0.1.0-beta.3.rc.2
 
 - Exit configured startup failures so the existing service supervisor can recover, rather than leaving Slack permanently disconnected behind healthy IPC. Report only a fixed startup stage, without provider error details or tokens. Missing initial configuration remains inert for setup.
+- Accept one inbound Slack attachment through the shared core staging path, preserving captions and thread scope. Authenticate bounded private downloads; reject unsupported/multiple files without native admission. Add files:read to the setup manifest.
+- Download attachments one at a time into a single pre-sized buffer to bound memory. Mark the receipt `attachment_pending` (unconfirmed) before the download and clear it afterwards, so a crash is visible in status/receipts instead of silently dropping the input. Transient failures (HTTP 5xx/429/408, timeouts, network errors) reply "temporary, please resend" and record `attachment_unavailable`; only bad files record `attachment_rejected`.
+- A file caption beginning with `!ez` is sent to the agent as an ordinary prompt; it is never executed as a channel control. Send controls as text-only messages.
 
 ## 0.1.0-beta.2
 

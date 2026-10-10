@@ -285,6 +285,66 @@ test('unsupported AI choices and efforts explain usage without changing settings
   assert.equal((await f.receipts.load()).length, 5);
 });
 
+test('file-only and captioned messages use one core attachment admission and retain thread scope', async t => {
+  const f=await fixture(t); let downloads=0;
+  f.agent.slack.attachment=async id=>{downloads++;assert.equal(id,'F123456');return {name:'proof.pdf',data:Buffer.from('%PDF-proof').toString('base64')};};
+  const p=event(81,'','C123456','123.456');p.event.subtype='file_share';p.event.files=[{id:'F123456'}];
+  await f.agent.receive(p);await f.agent.receive(p);await settled(f.agent);
+  const body=f.calls.find(c=>c.path==='/v1/runs').body;
+  assert.equal(body.text,'');assert.equal(body.scope,scopeFor(identity.teamId,'C123456','123.456'));
+  assert.equal(body.attachment.name,'proof.pdf');assert.equal(downloads,1);
+  const caption=event(82,'Read this');caption.event.files=[{id:'F123456'}];await f.agent.receive(caption);await settled(f.agent);
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').at(-1).body.text,'Read this');
+  await assert.rejects(f.agent.receive({...caption,event:{...caption.event,files:[{id:'F654321'}]}}),/event ID reused/);
+});
+test('multiple files and unavailable attachments get explicit replies without native admission', async t => {
+  const f=await fixture(t);let downloads=0;
+  f.agent.slack.attachment=async()=>{downloads++;throw Object.assign(Error('missing scope'),{providerCode:'missing_scope'});};
+  const p=event(83,'');p.event.files=[{id:'F123456'},{id:'F654321'}];await f.agent.receive(p);
+  assert.equal(downloads,0);assert.match(f.sends[0].text,/one attachment/);
+  p.event_id='Ev1234584';p.event.files.pop();await f.agent.receive(p);
+  assert.equal(downloads,1);assert.match(f.sends[1].text,/files:read/);
+  assert.equal(f.calls.length,0);assert.equal((await f.receipts.load()).at(-1).providerIssue,'missing_scope');
+});
+test('receipt is marked attachment_pending before the download and cleared after it',async t=>{
+  const f=await fixture(t);let during;
+  f.agent.slack.attachment=async()=>{during=(await f.receipts.load()).at(-1);return {name:'a.txt',data:Buffer.from('hi').toString('base64')};};
+  const p=event(91,'caption');p.event.files=[{id:'F123456'}];await f.agent.receive(p);await settled(f.agent);
+  assert.equal(during.issue,'attachment_pending');assert.equal(during.uncertain,true);assert.equal(during.runId,undefined);
+  const after=(await f.receipts.load()).at(-1);
+  assert.equal(after.issue,undefined);assert.equal(after.uncertain,false);assert.match(after.runId,/^r_app_/);
+});
+test('a crash during the download leaves a visible unconfirmed receipt that a replay does not re-admit',async t=>{
+  const f=await fixture(t);
+  f.agent.slack.attachment=()=>new Promise(()=>{});
+  const p=event(92,'');p.event.files=[{id:'F123456'}];void f.agent.receive(p);
+  for(let i=0;i<100&&!(await f.receipts.load()).some(r=>r.issue==='attachment_pending');i++)await new Promise(r=>setTimeout(r,10));
+  const row=(await f.receipts.load()).at(-1);assert.equal(row.issue,'attachment_pending');assert.equal(row.uncertain,true);assert.equal(row.closed,undefined);
+  const restarted=new Channel({identity,receipts:f.receipts,slack:f.agent.slack,call:f.agent.call,connection:{}});
+  assert.deepEqual(await restarted.receive(p),{duplicate:true});assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
+  await restarted.receive(event(93,'!ez status'));
+  assert.match(f.sends.at(-1).text,/1 unconfirmed inputs/);
+  restarted.close();
+});
+test('transient attachment failures ask for a resend and are not recorded as rejected files',async t=>{
+  const f=await fixture(t);
+  f.agent.slack.attachment=async()=>{throw Object.assign(Error('Slack: ratelimited'),{providerCode:'ratelimited',transient:true});};
+  const p=event(94,'');p.event.files=[{id:'F123456'}];await f.agent.receive(p);
+  assert.match(f.sends.at(-1).text,/temporary.*resend/i);assert.doesNotMatch(f.sends.at(-1).text,/Use a PDF/);
+  const row=(await f.receipts.load()).at(-1);
+  assert.equal(row.issue,'attachment_unavailable');assert.equal(row.uncertain,false);assert.equal(row.closed,true);assert.equal(row.providerIssue,'ratelimited');
+  assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
+  f.agent.slack.attachment=async()=>{throw Error('Unsupported Slack attachment type');};
+  const q=event(95,'');q.event.files=[{id:'F123456'}];await f.agent.receive(q);
+  assert.match(f.sends.at(-1).text,/PDF, JPEG/);assert.equal((await f.receipts.load()).at(-1).issue,'attachment_rejected');
+});
+test('a caption starting with !ez on a file is a prompt, not a control',async t=>{
+  const f=await fixture(t);
+  f.agent.slack.attachment=async()=>({name:'a.txt',data:Buffer.from('hi').toString('base64')});
+  const p=event(96,'!ez new');p.event.files=[{id:'F123456'}];await f.agent.receive(p);await settled(f.agent);
+  assert.equal(f.calls.filter(c=>c.body?.action).length,0);
+  assert.equal(f.calls.find(c=>c.path==='/v1/runs').body.text,'!ez new');
+});
 
 test('Sonnet selection ignores named-login duplicates and preserves an explicit login on effort changes', async t => {
   const models = [undefined, 'work'].map(authProfile => ({cli:'claude',authProfile,model:'sonnet',efforts:['low','medium','high']}));

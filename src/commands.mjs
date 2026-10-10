@@ -37,7 +37,7 @@ export function appManifest(name = 'Ez Agent') {
       // Slack's manifest schema requires a URL; Socket Mode delivers over its socket.
       url:'https://ez.invalid/slack/commands'
     }]},
-    oauth_config:{scopes:{bot:['channels:history','groups:history','chat:write','commands','channels:read','groups:read']}},
+    oauth_config:{scopes:{bot:['channels:history','groups:history','chat:write','commands','channels:read','groups:read','files:read']}},
     settings:{event_subscriptions:{bot_events:['message.channels','message.groups']},socket_mode_enabled:true,org_deploy_enabled:false,token_rotation_enabled:false}
   };
 }
