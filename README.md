@@ -226,7 +226,7 @@ app in Slack. Changing workspace/app identity needs a separate installation.
 ```sh
 pnpm verify
 pnpm run release:check
-pnpm smoke:docker
+EZ_SLACK_TEST_MANAGER=/absolute/reviewed-ez/bin/ezenciel-agents-tools.mjs pnpm smoke:docker
 ```
 
 Docker smoke installs through the real Ez manager, exercises registered CLI,
