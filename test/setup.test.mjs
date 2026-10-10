@@ -63,7 +63,7 @@ test('linking defaults and offline CLI derive the same native menu from the cont
     assert.equal(command.command,slashCommandFor(name));
     assert.equal(m.features.bot_user.display_name,name);
     assert.equal(m.settings.socket_mode_enabled,true);
-    assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read']);
+    assert.deepEqual(m.oauth_config.scopes.bot,['channels:history','groups:history','chat:write','commands','channels:read','groups:read','files:read']);
     for(const usage of controls.find(c => c.name === 'ai').usages) {
       assert(command.usage_hint.includes(['ai',usage.args].filter(Boolean).join(' ')));
       assert(controlHelp(command.command).includes(`${command.command} ai${usage.args ? ` ${usage.args}` : ''}`));
@@ -151,6 +151,23 @@ test('unconfigured service is inert, rejects a second service and restarts witho
   await s.close();const restarted=await serve(d);assert.equal((await rpc(d,'health')).healthy,true);await restarted.close();
 });
 
+test('private attachment download authenticates only Slack hosted URLs and bounds bytes', async()=>{
+  const bytes=Buffer.from('%PDF-synthetic');
+  const file={id:'F123456',mode:'hosted',name:'proof.pdf',size:bytes.length,url_private:'https://files.slack.com/files-pri/T123456-F123456/proof.pdf'};
+  let calls=0;
+  const make=(alter={},body=bytes)=>new Slack('synthetic',async(url,args)=>{
+    calls++;assert.equal(args.headers.authorization,'Bearer synthetic');assert.equal(args.redirect,'error');
+    if(new URL(url).pathname==='/api/files.info') return Response.json({ok:true,file:{...file,...alter}});
+    return new Response(body);
+  });
+  assert.deepEqual(await make().attachment(file.id),{name:file.name,data:bytes.toString('base64')});
+  for(const alter of [{id:'F654321'},{size:10*1024*1024+1},{mode:'external'},{url_private:'https://evil.invalid/files-pri/x'},{url_private:'https://files.slack.com@evil.invalid/files-pri/x'},{url_private:'http://files.slack.com/files-pri/x'}]) {
+    const before=calls;await assert.rejects(make(alter).attachment(file.id));assert.equal(calls,before+1);
+  }
+  await assert.rejects(make({},Buffer.from('not a PDF')).attachment(file.id));
+  await assert.rejects(make({size:1}).attachment(file.id),/size mismatch/);
+  await assert.rejects(make({},Buffer.alloc(10*1024*1024+1)).attachment(file.id),/Oversized/);
+});
 for (const stage of ['core_registration','slack_identity','socket_start','delivery_resume']) test(`configured ${stage} failure exits cleanly for supervisor recovery without leaking provider detail`,async t=>{
   const d=await dir(t);let failed=true, disconnected=0, created=0;
   const core=http.createServer((req,res)=>{
@@ -183,4 +200,83 @@ for (const stage of ['core_registration','slack_identity','socket_start','delive
   failed=false;
   const recovered=await serve(d,{createSocket});t.after(()=>recovered.close());
   assert.deepEqual(await rpc(d,'health'),{healthy:true,configured:true,connected:true,issue:null});
+});
+
+const MiB=1024*1024;
+const slackFile=(name,size,alter={})=>({id:'F123456',mode:'hosted',name,size,url_private:'https://files.slack.com/files-pri/T123456-F123456/'+name,...alter});
+const slackWith=(file,body,onFetch=()=>{})=>new Slack('synthetic',async(url,args)=>{
+  onFetch(url,args);
+  if(new URL(url).pathname==='/api/files.info')return Response.json({ok:true,file});
+  return typeof body==='function'?body(url,args):new Response(body);
+});
+test('attachment accepts JPEG, PNG, WebP and UTF-8 text by content, with exact bytes preserved',async()=>{
+  const cases=[
+    ['photo.jpg',Buffer.from([255,216,255,224,0,16,74,70,73,70])],
+    ['photo.png',Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13])],
+    ['photo.webp',Buffer.concat([Buffer.from('RIFF'),Buffer.from([4,0,0,0]),Buffer.from('WEBPVP8 ')])],
+    ['notes.txt',Buffer.from('plain text é中\n')],
+    ['notes.md',Buffer.from('# Markdown\n')],
+  ];
+  for(const [name,bytes] of cases)assert.deepEqual(await slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
+});
+test('attachment rejects text with NUL bytes, invalid UTF-8, or content that does not match an allowed type',async()=>{
+  for(const [name,bytes] of [['nul.txt',Buffer.from('ok\0text')],['bad.md',Buffer.from([0x61,0xc3,0x28,0x62])],['fake.png',Buffer.from('not a png')],['data.bin',Buffer.from('plain but wrong extension')]]){
+    await assert.rejects(slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),e=>{assert.match(e.message,/Unsupported/);assert.notEqual(e.transient,true);return true;},name);
+  }
+});
+test('attachment stream aborts as soon as the byte limit is exceeded and cancels the body',async()=>{
+  let pulled=0,cancelled=false;
+  const stream=()=>new ReadableStream({pull(c){pulled++;c.enqueue(new Uint8Array(MiB));},cancel(){cancelled=true;}});
+  await assert.rejects(slackWith(slackFile('big.txt',10*MiB),()=>new Response(stream())).attachment('F123456'),e=>{assert.match(e.message,/Oversized/);assert.notEqual(e.transient,true);return true;});
+  assert(pulled<=12,`pulled ${pulled} chunks`);assert.equal(cancelled,true);
+});
+test('attachment downloads never follow redirects and treat a redirect as a bad file, not a transient error',async()=>{
+  const seen=[];
+  const redirected=slackWith(slackFile('a.txt',3),()=>{throw Object.assign(TypeError('fetch failed'),{cause:Error('unexpected redirect')});},(u,a)=>seen.push(a.redirect));
+  await assert.rejects(redirected.attachment('F123456'),e=>{assert.notEqual(e.transient,true);return true;});
+  assert.deepEqual(seen,['error','error']);
+  await assert.rejects(slackWith(slackFile('a.txt',3),()=>new Response(null,{status:302,headers:{location:'https://evil.invalid/x'}})).attachment('F123456'),e=>{assert.notEqual(e.transient,true);return true;});
+});
+test('attachment failures separate transient provider/network errors from bad files',async()=>{
+  const body=Buffer.from('abc');
+  for(const status of [500,502,503,429,408])await assert.rejects(slackWith(slackFile('a.txt',3),()=>new Response('x',{status})).attachment('F123456'),e=>e.transient===true,String(status));
+  for(const status of [400,401,403,404])await assert.rejects(slackWith(slackFile('a.txt',3),()=>new Response('x',{status})).attachment('F123456'),e=>e.transient!==true,String(status));
+  await assert.rejects(slackWith(slackFile('a.txt',3),()=>{throw Object.assign(Error('timed out'),{name:'TimeoutError'});}).attachment('F123456'),e=>e.transient===true);
+  const stalled=()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([97]));c.error(Error('socket reset'));}}));
+  await assert.rejects(slackWith(slackFile('a.txt',3),stalled).attachment('F123456'),e=>e.transient===true);
+  const info=(status,payload)=>new Slack('synthetic',async()=>Response.json(payload,{status}));
+  await assert.rejects(info(429,{ok:false,error:'ratelimited'}).attachment('F123456'),e=>e.transient===true&&e.providerCode==='ratelimited');
+  await assert.rejects(info(200,{ok:false,error:'internal_error'}).attachment('F123456'),e=>e.transient===true);
+  await assert.rejects(info(200,{ok:false,error:'file_not_found'}).attachment('F123456'),e=>e.transient!==true);
+  await assert.rejects(info(200,{ok:false,error:'missing_scope'}).attachment('F123456'),e=>e.transient!==true);
+  assert.equal((await slackWith(slackFile('a.txt',3),body).attachment('F123456')).data,body.toString('base64'));
+});
+test('attachment downloads run one at a time',async()=>{
+  let active=0,peak=0;
+  const slack=new Slack('synthetic',async url=>{
+    if(new URL(url).pathname==='/api/files.info')return Response.json({ok:true,file:slackFile('a.txt',3)});
+    active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,20));active--;return new Response('abc');
+  });
+  const results=await Promise.allSettled([1,2,3,4].map(()=>slack.attachment('F123456')));
+  assert(results.every(r=>r.status==='fulfilled'));assert.equal(peak,1);
+  const failing=new Slack('synthetic',async()=>{throw Error('down');});
+  await assert.rejects(failing.attachment('F123456'));
+  assert.equal((await slack.attachment('F123456')).name,'a.txt');
+});
+test('doctor reports attachmentAccess from the x-oauth-scopes header, and null when absent',async t=>{
+  const d=await dir(t);
+  const core=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({bindingId:'synthetic'}));});
+  await new Promise(resolve=>core.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>core.close(resolve)));
+  await saveConnection(d,{url:`http://127.0.0.1:${core.address().port}`,token:'a'.repeat(43),privateHttp:true});
+  await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}:{url:'wss://synthetic'}});
+  const originalFetch=globalThis.fetch;let scopes='chat:write, files:read ,commands';
+  globalThis.fetch=async(url,args)=>String(url)==='https://slack.com/api/auth.test'
+    ?Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'},{headers:scopes===null?{}:{'x-oauth-scopes':scopes}}):originalFetch(url,args);
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const socket=new EventEmitter();socket.start=async()=>socket.emit('connected');socket.disconnect=async()=>{};
+  const service=await serve(d,{createSocket:()=>socket});t.after(()=>service.close());
+  assert.equal((await rpc(d,'doctor')).attachmentAccess,true);
+  scopes='chat:write,commands';assert.equal((await rpc(d,'doctor')).attachmentAccess,false);
+  scopes='';assert.equal((await rpc(d,'doctor')).attachmentAccess,false);
+  scopes=null;assert.equal((await rpc(d,'doctor')).attachmentAccess,null);
 });
