@@ -12,7 +12,7 @@ const slash = (n = 1, text = '', channel = 'C123456') => ({command:'/ez',team_id
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'ez-slack-contract-'));
   const receipts = new Receipts(directory), calls = [], sends = [], settings = new Map(), runs = new Map();
-  const models = [{cli:'codex',provider:'openai',model:'model-a',efforts:['low','medium']},{cli:'codex',provider:'openai',model:'model-b',efforts:['low','medium']}];
+  const models = options.models ?? [{cli:'codex',provider:'openai',model:'model-a',efforts:['low','medium']},{cli:'codex',provider:'openai',model:'model-b',efforts:['low','medium']}];
   const call = async (path, body) => {
     calls.push({path,body});
     if (options.call) return options.call(path, body);
@@ -21,7 +21,7 @@ async function fixture(t, options = {}) {
       const value = settings.get(scope) ?? {activeSessionId:null,ai:{selectedId:'default',presets:[{id:'default',cli:'codex',model:'model-a',effort:'low'}]},models};
       if (body) {
         assert.equal(body.expectedSession, value.activeSessionId);
-        if (body.action === 'model') {value.ai.selectedId='choice';value.ai.presets=[{id:'choice',cli:body.cli,provider:body.provider,model:body.model,effort:body.effort}];}
+        if (body.action === 'model') {value.ai.selectedId='choice';value.ai.presets=[{id:'choice',cli:body.cli,provider:body.provider,authProfile:body.authProfile,model:body.model,effort:body.effort}];}
         if (body.action === 'new' || !value.activeSessionId) value.activeSessionId = `session-${scope}`;
         settings.set(scope, value);
       }
@@ -250,7 +250,7 @@ test('AI controls show a concise selection and list catalog choices separately',
   assert.equal(f.sends[0].text, 'This channel: codex / model-a / low. Use !ez ai list for choices.');
   assert(!f.sends[0].text.includes('Presets:'));
   await f.agent.receive(event(2, '!ez ai list'));
-  assert.match(f.sends[1].text, /codex model-b — effort: low, medium/);
+  assert.match(f.sends[1].text, /codex model-b \(openai\) — effort: low, medium/);
   assert.equal(f.calls.filter(c => c.body).length, 0);
   assert.equal(f.runs.size, 0);
 });
@@ -344,4 +344,34 @@ test('a caption starting with !ez on a file is a prompt, not a control',async t=
   const p=event(96,'!ez new');p.event.files=[{id:'F123456'}];await f.agent.receive(p);await settled(f.agent);
   assert.equal(f.calls.filter(c=>c.body?.action).length,0);
   assert.equal(f.calls.find(c=>c.path==='/v1/runs').body.text,'!ez new');
+});
+
+test('Sonnet selection ignores named-login duplicates and preserves an explicit login on effort changes', async t => {
+  const models = [undefined, 'work'].map(authProfile => ({cli:'claude',authProfile,model:'sonnet',efforts:['low','medium','high']}));
+  const f = await fixture(t, {models});
+  await f.agent.receive(event(1, '!ez ai claude sonnet high'));
+  assert.match(f.sends.at(-1).text, /claude \/ sonnet \/ high/);
+  let selection = f.calls.filter(c=>c.body?.action === 'model').at(-1).body;
+  assert.equal(selection.authProfile, undefined);
+  assert.equal(selection.model, 'sonnet');
+  await f.agent.receive(event(2, '!ez ai claude@work sonnet high'));
+  await f.agent.receive(event(3, '!ez ai effort medium'));
+  selection = f.calls.filter(c=>c.body?.action === 'model').at(-1).body;
+  assert.equal(selection.authProfile, 'work');
+  assert.equal(selection.model, 'sonnet');
+  assert.equal(selection.effort, 'medium');
+  await f.agent.receive(event(4, '!ez ai claude sonnet xhigh'));
+  assert.match(f.sends.at(-1).text, /Effort xhigh is not supported.*low, medium, high/);
+  assert.equal(f.calls.filter(c=>c.body?.action === 'model').length, 3);
+});
+
+test('missing Claude catalog leaves the selected Opus xhigh chat unchanged', async t => {
+  const f = await fixture(t, {models:[]});
+  const scope = scopeFor(identity.teamId, 'C123456');
+  f.settings.set(scope, {activeSessionId:null,ai:{selectedId:'opus',presets:[{id:'opus',cli:'claude',model:'opus',effort:'xhigh'}]},models:[]});
+  await f.agent.receive(event(1, '!ez ai claude sonnet high'));
+  assert.match(f.sends.at(-1).text, /sonnet is not advertised for claude.*current selection unchanged/);
+  assert.equal(f.calls.filter(c=>c.body?.action).length, 0);
+  await f.agent.receive(event(2, '!ez ai'));
+  assert.match(f.sends.at(-1).text, /claude \/ opus \/ xhigh/);
 });
