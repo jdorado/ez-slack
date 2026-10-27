@@ -196,14 +196,23 @@ channel or thread as its reply destination; core binds it and queues the
 scheduled run's replies for this application. About every 15 seconds the plugin
 lists the binding's newest 100 runs and posts each Slack-scoped run that no Slack
 message admitted into its channel (top level) or thread, once. A failed or
-cancelled scheduled run posts `Ez run failed.` or `Ez run cancelled.`. This is the
-only way work the agent starts itself reaches Slack: there is still no arbitrary
-send, and a schedule created from Telegram or another channel never posts here.
-Scheduled runs are background work: `!ez stop` does not cancel them and
-`!ez status` does not count them. Their receipts are keyed `run:RUN_ID`
-(`ez slack receipts`); an uncertain or rejected send is not retried.
-Replies older than the newest 100 runs after a long outage are not rendered.
-`ez slack doctor --json` reports `scheduledReplies` (`ok` or `unavailable`).
+cancelled scheduled run posts `Ez run failed.` or `Ez run cancelled.`; a run that
+core re-queues under the same ID (quota retry) still delivers its later reply.
+This is the only way work the agent starts itself reaches Slack: there is still no
+arbitrary send, and a schedule created from Telegram or another channel never
+posts here. Scheduled runs are background work: `!ez stop` does not cancel them
+and `!ez status` does not count them.
+
+The first sweep after install or upgrade never replays results that had already
+finished (their IDs go to `scheduled-baseline.json`); work still running renders
+from its first message. Receipts are keyed `run:RUN_ID` (`ez slack receipts`). An
+uncertain send is never retried; a definite provider rejection (for example
+`not_in_channel`) drops that run's remaining replies, is recorded as an issue and
+is not retried. The 100-run window is shared with every Slack-admitted run: a
+scheduled run still working after 100 newer runs are created stops rendering and
+its receipt is closed. `ez slack doctor --json` reports
+`scheduledReplies: {sweep: ok|unavailable, needAttention: N}` (receipts that are
+uncertain or have an issue).
 
 ## State, recovery and limits
 

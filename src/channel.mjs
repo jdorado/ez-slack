@@ -255,19 +255,36 @@ export class Channel {
   async sweep() {
     const { runs } = await this.core('/v1/runs');
     if (!Array.isArray(runs)) throw Error('Ez run list invalid');
-    const rows = new Map((await this.receipts.load()).map(r => [r.key, r]));
+    const rows = await this.receipts.load(), known = new Map(rows.map(r => [r.key, r]));
+    const ignored = await this.receipts.loadBaseline(), seen = new Set(), finished = [];
     for (const run of runs) {
       const place = /^r_[a-z0-9_]{1,88}$/.test(run?.id ?? '') && !run.id.startsWith('r_app_') ? scopeParts(run.scope, this.identity.teamId) : null;
       if (!place) continue;
-      const key = `run:${run.id}`, known = rows.get(key);
-      if (known && (known.closed || known.uncertain || known.issue)) continue;
-      const speaks = run.messages?.some(m => typeof m?.text === 'string' && m.text.trim()) || run.approvals?.some(a => a.state === 'pending') || ['failed', 'cancelled'].includes(run.status);
-      if (!known && !speaks) continue;
+      const key = `run:${run.id}`, receipt = known.get(key), terminal = ['completed', 'failed', 'cancelled'].includes(run.status);
+      seen.add(run.id);
+      // The first sweep never replays results that finished before it started (an upgrade, or lost receipts).
+      if (ignored === null ? terminal && !receipt : ignored.includes(run.id)) { if (ignored === null) finished.push(run.id); continue; }
+      if (receipt && (receipt.uncertain || receipt.issue)) continue;
+      // Core can re-queue a failed run under the same ID (quota retry), so a closed receipt only means "nothing unsent".
+      const sent = id => receipt?.sends.some(s => s.key.startsWith(`${id}:`));
+      const unsent = run.messages?.some(m => typeof m?.id === 'string' && typeof m.text === 'string' && m.text.trim() && !sent(m.id)) ||
+        (run.approvals?.some(a => a.state === 'pending') && !sent('approval-required')) || (['failed', 'cancelled'].includes(run.status) && !sent('terminal'));
+      if (!unsent) { if (receipt && !receipt.closed && terminal) await this.receipts.change(key, r => { r.closed = true; }); continue; }
       try {
-        const receipt = known ?? await this.receipts.change(key, r => Object.assign(r, { channel: place.channel, scope: run.scope, runId: run.id, scheduled: true, ...(place.threadTs === undefined ? {} : {threadTs: place.threadTs}) }));
-        await this.render(receipt, run);
-      } catch { await this.receipts.change(key, r => { r.issue ??= 'result_or_delivery_unavailable'; }).catch(() => {}); }
+        const open = await this.receipts.change(key, r => {
+          if (!r.channel) Object.assign(r, { channel: place.channel, scope: run.scope, runId: run.id, scheduled: true, ...(place.threadTs === undefined ? {} : {threadTs: place.threadTs}) });
+          delete r.closed;
+        });
+        await this.render(open, run);
+      } catch {
+        // A definite failure is not retried; close it so it can be evicted instead of filling receipt capacity.
+        await this.receipts.change(key, r => { r.issue ??= 'result_or_delivery_unavailable'; if (!r.uncertain) r.closed = true; }).catch(() => {});
+      }
     }
+    // A scheduled run that left the newest page can no longer be rendered; do not leave its receipt open forever.
+    for (const r of rows) if (r.scheduled && !r.closed && !r.uncertain && !seen.has(r.runId)) await this.receipts.change(r.key, x => { x.closed = true; });
+    if (ignored === null) await this.receipts.saveBaseline(finished);
+    else if (ignored.some(id => !seen.has(id))) await this.receipts.saveBaseline(ignored.filter(id => seen.has(id)));
   }
   startSweep(intervalMs = 15000) {
     if (this.closed || this.sweeper) return;

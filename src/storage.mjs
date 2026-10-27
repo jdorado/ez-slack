@@ -40,4 +40,11 @@ export class Receipts {
     this.serial = work.catch(() => {});
     return work;
   }
+  // Scheduled runs that had already finished when the reply sweep first ran: never rendered, so an upgrade or lost receipts do not replay old results.
+  async loadBaseline() {
+    const ids = await read(join(dirname(this.file), 'scheduled-baseline.json'), null);
+    if (ids !== null && !Array.isArray(ids)) throw Error('Invalid baseline state');
+    return ids;
+  }
+  saveBaseline(ids) { return atomic(join(dirname(this.file), 'scheduled-baseline.json'), ids); }
 }

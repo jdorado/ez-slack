@@ -2,7 +2,10 @@
 
 ## 0.1.0-beta.4
 
-- Post the replies of a schedule created in a channel or thread into that channel or thread. Core already binds such a schedule to its Slack scope and queues its replies for this application; the plugin never read them, so scheduled work finished silently. A sweep every 15 seconds lists the binding's newest 100 runs and renders each Slack-scoped run that no Slack message admitted, once, through the same receipts, chunking and no-resend rules as a reply. Scheduled runs stay background work: `!ez stop` and `!ez status` ignore them. `doctor` reports `scheduledReplies`. Still no arbitrary send.
+- Post the replies of a schedule created in a channel or thread into that channel or thread. Core already binds such a schedule to its Slack scope and queues its replies for this application; the plugin never read them, so scheduled work finished silently. A sweep every 15 seconds lists the binding's newest 100 runs and renders each Slack-scoped run that no Slack message admitted, once, through the same receipts, chunking and no-resend rules as a reply. A run core re-queues under the same ID (quota retry) still delivers its later reply. Scheduled runs stay background work: `!ez stop` and `!ez status` ignore them.
+- The first sweep ignores runs that had already finished, so an upgrade does not replay old results (`scheduled-baseline.json` in the private volume).
+- A definite scheduled send failure and a run that left the newest 100 close their receipts so they are evicted instead of filling the 1000-receipt capacity that blocks inbound messages.
+- `doctor` reports `scheduledReplies: {sweep, needAttention}`. Still no arbitrary send.
 
 ## 0.1.0-beta.3
 
