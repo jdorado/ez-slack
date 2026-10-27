@@ -280,3 +280,25 @@ test('doctor reports attachmentAccess from the x-oauth-scopes header, and null w
   scopes='';assert.equal((await rpc(d,'doctor')).attachmentAccess,false);
   scopes=null;assert.equal((await rpc(d,'doctor')).attachmentAccess,null);
 });
+test('the running service sweeps scheduled replies into Slack and doctor reports it',async t=>{
+  const d=await dir(t), runId=`r_schedule_${'1'.repeat(64)}`, posts=[];
+  const core=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(req.url==='/v1/runs'
+    ?{runs:[{id:runId,scope:`slack:${config.teamId}:C123456`,status:'running',messages:[{id:'m1',text:'Scheduled hello'}],approvals:[]}],nextCursor:null}:{bindingId:'synthetic'}));});
+  await new Promise(resolve=>core.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>core.close(resolve)));
+  await saveConnection(d,{url:`http://127.0.0.1:${core.address().port}`,token:'a'.repeat(43),privateHttp:true});
+  await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}:{url:'wss://synthetic'}});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,args)=>{
+    if(String(url)==='https://slack.com/api/auth.test')return Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'});
+    if(String(url)==='https://slack.com/api/chat.postMessage'){const body=JSON.parse(args.body);posts.push(body);return Response.json({ok:true,channel:body.channel,ts:'1234567.999999'});}
+    return originalFetch(url,args);
+  };
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const socket=new EventEmitter();socket.start=async()=>socket.emit('connected');socket.disconnect=async()=>{};
+  const service=await serve(d,{createSocket:()=>socket});t.after(()=>service.close());
+  for(let i=0;i<200&&!posts.length;i++)await new Promise(r=>setTimeout(r,10));
+  assert.deepEqual(posts.map(p=>[p.channel,p.text,p.thread_ts]),[['C123456','Scheduled hello',undefined]]);
+  for(let i=0;i<200&&(await rpc(d,'doctor')).scheduledReplies.sweep!=='ok';i++)await new Promise(r=>setTimeout(r,10));
+  assert.deepEqual((await rpc(d,'doctor')).scheduledReplies,{sweep:'ok',needAttention:0});
+  assert.equal((await rpc(d,'receipts'))[0].key,`run:${runId}`);
+});

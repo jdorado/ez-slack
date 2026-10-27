@@ -44,6 +44,7 @@ export async function serve(directory, { createSocket = options => new SocketMod
       await socket.start();
       startupStage = 'delivery_resume';
       await channel.resumeDelivery();
+      channel.startSweep();
     } catch (e) {
       if (startupStage === 'configuration' && e.code === 'ENOENT') issue = 'setup_required';
       // Let the existing service supervisor recover configured startup failures.
@@ -63,8 +64,10 @@ export async function serve(directory, { createSocket = options => new SocketMod
           const registration = await applicationCall('/v1/registration', undefined, c);
           const provider = new Slack(s.botToken), who = await provider.call('auth.test');
           if (who.team_id !== s.teamId || who.user_id !== s.botUserId) throw Error('Slack identity changed');
+          const held = await receipts.load();
           data = { configured: true, connected, issue, teamId: s.teamId, appId: s.appId, botUserId: s.botUserId, bindingId: registration.bindingId, ownerId: registration.ownerId,
-            attachmentAccess: provider.scopes ? provider.scopes.includes('files:read') : null, receiptCount: (await receipts.load()).length, watching: channel?.watching.size ?? 0 };
+            attachmentAccess: provider.scopes ? provider.scopes.includes('files:read') : null, receiptCount: held.length, watching: channel?.watching.size ?? 0,
+            scheduledReplies: { sweep: channel?.sweepIssue === false ? 'ok' : 'unavailable', needAttention: held.filter(r => r.scheduled && (r.uncertain || r.issue)).length } };
           if (args.channel !== undefined) {
             try { data.channelAccess = {channel:args.channel,botMember:await provider.channelMember(args.channel,s.botUserId,s.botUserId)}; }
             catch (e) { data.channelAccess = {channel:args.channel,botMember:null,issue:/^[a-z_]{1,80}$/.test(e.providerCode ?? '') ? e.providerCode : 'membership_unavailable'}; }

@@ -189,6 +189,32 @@ Slash admission checks both caller and bot in that list. Completion
 requires real inbound admission, native reply, matching channel plus Slack `ts`
 receipt. Slack acceptance does not prove a person read the message.
 
+## Scheduled replies
+
+A schedule the agent creates during a turn in a channel or thread keeps that
+channel or thread as its reply destination; core binds it and queues the
+scheduled run's replies for this application. About every 15 seconds the plugin
+lists the binding's newest 100 runs and posts each Slack-scoped run that no Slack
+message admitted into its channel (top level) or thread, once. A failed or
+cancelled scheduled run posts `Ez run failed.` or `Ez run cancelled.`; a run that
+core re-queues under the same ID (quota retry) still delivers its later reply.
+This is the only way work the agent starts itself reaches Slack: there is still no
+arbitrary send, and a schedule created from Telegram or another channel never
+posts here. Scheduled runs are background work: `!ez stop` does not cancel them
+and `!ez status` does not count them.
+
+The first sweep after install or upgrade never replays results that had already
+finished (their IDs go to `scheduled-baseline.json`); work still running renders
+from its first message. Receipts are keyed `run:RUN_ID` (`ez slack receipts`). An
+uncertain send is never retried; a definite provider rejection (for example
+`not_in_channel`) drops that run's remaining replies, is recorded as an issue and
+is not retried. The 100-run window is shared with every Slack-admitted run: a
+scheduled run still working after 100 newer runs are created stops rendering and
+its receipt is closed, even an uncertain one (its issue and send states remain as the
+record), so nothing at schedule rate fills the receipt capacity. `ez slack doctor --json` reports
+`scheduledReplies: {sweep: ok|unavailable, needAttention: N}` (receipts that are
+uncertain or have an issue).
+
 ## State, recovery and limits
 
 The private `data` volume holds `connection.json`, `slack.json`, transport
@@ -209,7 +235,7 @@ operator investigation, not an automated turn replay. `receipts` identifies
 uncertainty; reconnect/start does not prove recovery. No blind provider retries.
 
 Supports text, channel controls and one inbound PDF, JPEG/PNG/WebP image, or text/Markdown attachment per message (10 MiB maximum), through core’s shared Telegram/application staging path. Existing Slack apps must add `files:read` and reinstall the app. Remote files and multiple attachments are rejected explicitly. A file caption starting with `!ez` is an ordinary prompt for the agent, not a channel control; send controls as text-only messages. Temporary Slack failures while fetching a file get a "please resend" reply and are recorded as `attachment_unavailable`; an input interrupted mid-download stays visible as `attachment_pending` (unconfirmed) and is not replayed. No outbound attachments, reactions, approval buttons,
-DMs, agent-to-agent channels or automatic schedule-result discovery. A pending
+DMs or agent-to-agent channels. A pending
 core approval is reported without inferring consent; cancel and use an existing
 supported owner surface when necessary. Slack app-token reconnects cannot be used
 for Slack Marketplace distribution; use this private installation path.

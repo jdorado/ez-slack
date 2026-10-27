@@ -9,6 +9,13 @@ import { controls as controlCommands, controlHelp } from './commands.mjs';
 
 export const validThreadTs = value => typeof value === 'string' && /^\d{1,20}\.\d{1,20}$/.test(value);
 export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${threadTs === undefined ? '' : `:thread:${threadTs}`}`;
+// Inverse of scopeFor for this workspace; any other scope is not ours to render.
+export function scopeParts(scope, team) {
+  const [prefix, owner, channel, kind, threadTs, ...rest] = typeof scope === 'string' ? scope.split(':') : [];
+  if (prefix !== 'slack' || owner !== team || rest.length || !/^[CG][A-Z0-9]{5,40}$/.test(channel ?? '')) return null;
+  if (kind === undefined) return { channel };
+  return kind === 'thread' && validThreadTs(threadTs) ? { channel, threadTs } : null;
+}
 export function incoming(payload, identity) {
   const e = payload?.event;
   if (payload?.type !== 'event_callback' || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
@@ -39,12 +46,13 @@ export function chunks(text) {
   if (part) result.push(part);
   return result;
 }
+const approvalText = 'This run needs an explicit Ez approval. Slack approval controls are not available in this version.';
 const presetText = p => p ? [`${p.cli}${p.authProfile ? `@${p.authProfile}` : ''}`, p.model, p.effort].filter(Boolean).join(' / ') : 'Default AI';
 const selectedPreset = c => c.ai?.presets?.find(p => p.id === c.ai.selectedId);
 export class Channel {
   constructor({ identity, connection, receipts, slack, call = applicationCall }) {
     Object.assign(this, { identity, connection, receipts, slack, call });
-    this.watching = new Map(); this.accepting = new Set(); this.closed = false;
+    this.watching = new Map(); this.accepting = new Set(); this.closed = false; this.sweeper = null; this.sweepIssue = false;
   }
   core(path, body) { return this.call(path, body, this.connection); }
   async receive(payload, ack = async () => {}) {
@@ -138,7 +146,8 @@ export class Channel {
     if (command === 'help') return controlHelp();
     if (command === 'stop') {
       if (args.length) throw Error('Use !ez stop');
-      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed);
+      // Scheduled runs are background work; stopping a conversation never cancels them.
+      const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed && !r.scheduled);
       for (const r of rows) await this.core(`/v1/runs/${r.runId}/cancel`, {});
       return `Cancellation requested for ${rows.length} run(s) in this ${place}.`;
     }
@@ -147,7 +156,7 @@ export class Channel {
     if (command === 'status' && !args.length) {
       const unresolvedSend = r => r.sends.some(s => ['uncertain', 'rejected'].includes(s.state));
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.key !== input.key && (!r.closed || r.uncertain || unresolvedSend(r)));
-      const runs = rows.filter(r => r.runId && !r.closed);
+      const runs = rows.filter(r => r.runId && !r.closed && !r.scheduled);
       const results = await Promise.allSettled(runs.map(async r => {
         const run = await this.core(`/v1/runs/${r.runId}`);
         if (run?.id !== r.runId || run.scope !== input.scope || !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(run.status)) throw Error('Ez result identity mismatch');
@@ -221,16 +230,7 @@ export class Channel {
       try {
         const run = await this.core(`/v1/runs/${receipt.runId}`);
         if (run.scope !== receipt.scope || run.id !== receipt.runId) throw Error('Ez result identity mismatch');
-        for (const m of run.messages ?? []) if (typeof m.id === 'string' && typeof m.text === 'string' && m.text.trim()) await this.deliver(receipt, m.id, m.text);
-        // Approval decisions are not inferred from chat. v1 explicitly stops at this unsupported surface.
-        if (run.approvals?.some(a => a.state === 'pending')) {
-          await this.deliver(receipt, 'approval-required', 'This run needs an explicit Ez approval. Slack approval controls are not available in this version.');
-        }
-        if (['completed', 'failed', 'cancelled'].includes(run.status)) {
-          if (run.status !== 'completed') await this.deliver(receipt, 'terminal', `Ez run ${run.status}.`);
-          await this.receipts.change(receipt.key, r => { r.closed = true; });
-          this.watching.delete(receipt.key); return;
-        }
+        if (await this.render(receipt, run)) { this.watching.delete(receipt.key); return; }
         holder.timer = setTimeout(tick, 1000);
       } catch (e) {
         await this.receipts.change(receipt.key, r => { r.issue ??= 'result_or_delivery_unavailable'; }).catch(() => {});
@@ -239,8 +239,68 @@ export class Channel {
     };
     void tick();
   }
-  async resumeDelivery() {
-    for (const receipt of await this.receipts.load()) if (receipt.runId && !receipt.closed && !receipt.uncertain) this.watch(receipt);
+  // Deliver what a core run snapshot holds to its receipt's destination; true once the run is terminal and the receipt closed.
+  async render(receipt, run) {
+    for (const m of run.messages ?? []) if (typeof m.id === 'string' && typeof m.text === 'string' && m.text.trim()) await this.deliver(receipt, m.id, m.text);
+    // Approval decisions are not inferred from chat. v1 explicitly stops at this unsupported surface.
+    if (run.approvals?.some(a => a.state === 'pending')) {
+      await this.deliver(receipt, 'approval-required', approvalText);
+    }
+    if (!['completed', 'failed', 'cancelled'].includes(run.status)) return false;
+    if (run.status !== 'completed') await this.deliver(receipt, 'terminal', `Ez run ${run.status}.`);
+    await this.receipts.change(receipt.key, r => { r.closed = true; });
+    return true;
   }
-  close() { this.closed = true; for (const h of this.watching.values()) clearTimeout(h.timer); this.watching.clear(); }
+  // Core binds a schedule created in a Slack turn to that channel or thread and queues its replies in the application
+  // inbox. Render the binding's recent runs that no Slack message admitted; this is not a send and starts no turn.
+  async sweep() {
+    const { runs } = await this.core('/v1/runs');
+    if (!Array.isArray(runs)) throw Error('Ez run list invalid');
+    const rows = await this.receipts.load(), known = new Map(rows.map(r => [r.key, r]));
+    const ignored = await this.receipts.loadBaseline(), seen = new Set(), live = new Set(), finished = [];
+    for (const run of runs) {
+      const place = /^r_[a-z0-9_]{1,88}$/.test(run?.id ?? '') && !run.id.startsWith('r_app_') ? scopeParts(run.scope, this.identity.teamId) : null;
+      if (!place) continue;
+      const key = `run:${run.id}`, receipt = known.get(key), terminal = ['completed', 'failed', 'cancelled'].includes(run.status);
+      seen.add(run.id); if (!terminal) live.add(run.id);
+      // The first sweep never replays results that finished before it started (an upgrade, or lost receipts).
+      if (ignored === null ? terminal && !receipt : terminal && ignored.includes(run.id)) { if (ignored === null) finished.push(run.id); continue; }
+      if (receipt && (receipt.uncertain || receipt.issue)) continue;
+      // Core can re-queue a failed run under the same ID (quota retry), so a closed receipt only means "nothing unsent".
+      // Delivered means every chunk is accepted: a half-sent or unconfirmed message goes back through deliver, which resumes or flags it.
+      const done = (id, text) => chunks(text).every((_, i) => receipt?.sends.some(s => s.key === `${id}:${i}` && s.state === 'accepted'));
+      const unsent = run.messages?.some(m => typeof m?.id === 'string' && typeof m.text === 'string' && m.text.trim() && !done(m.id, m.text)) ||
+        (run.approvals?.some(a => a.state === 'pending') && !done('approval-required', approvalText)) || (['failed', 'cancelled'].includes(run.status) && !done('terminal', `Ez run ${run.status}.`));
+      if (!unsent) { if (receipt && !receipt.closed && terminal) await this.receipts.change(key, r => { r.closed = true; }); continue; }
+      try {
+        const open = await this.receipts.change(key, r => {
+          if (!r.channel) Object.assign(r, { channel: place.channel, scope: run.scope, runId: run.id, scheduled: true, ...(place.threadTs === undefined ? {} : {threadTs: place.threadTs}) });
+          delete r.closed;
+        });
+        await this.render(open, run);
+      } catch {
+        // A definite failure is not retried; close it so it can be evicted instead of filling receipt capacity.
+        await this.receipts.change(key, r => { r.issue ??= 'result_or_delivery_unavailable'; if (r.sends.some(s => s.state === 'uncertain')) r.uncertain = true; if (!r.uncertain) r.closed = true; }).catch(() => {});
+      }
+    }
+    // A scheduled run that left the newest page can no longer be rendered. Close its receipt, even an uncertain one (the
+    // issue and send states stay as the record): nobody clears these at schedule rate and open rows fill receipt capacity.
+    for (const r of rows) if (r.scheduled && !r.closed && !seen.has(r.runId)) await this.receipts.change(r.key, x => { x.closed = true; x.uncertain = false; });
+    // A baselined run stays ignored while it is finished; one that core re-queues (quota retry) is released.
+    const keep = ignored?.filter(id => seen.has(id) && !live.has(id));
+    if (ignored === null) await this.receipts.saveBaseline(finished);
+    else if (keep.length !== ignored.length) await this.receipts.saveBaseline(keep);
+  }
+  startSweep(intervalMs = 15000) {
+    if (this.closed || this.sweeper) return;
+    const tick = async () => {
+      try { await this.sweep(); this.sweepIssue = false; } catch { this.sweepIssue = true; }
+      if (!this.closed) this.sweeper = setTimeout(tick, intervalMs);
+    };
+    this.sweeper = setTimeout(tick, 0);
+  }
+  async resumeDelivery() {
+    for (const receipt of await this.receipts.load()) if (receipt.runId && !receipt.closed && !receipt.uncertain && !receipt.scheduled) this.watch(receipt);
+  }
+  close() { this.closed = true; clearTimeout(this.sweeper); for (const h of this.watching.values()) clearTimeout(h.timer); this.watching.clear(); }
 }

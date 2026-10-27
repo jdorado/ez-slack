@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Channel, incoming, slashIncoming, scopeFor, chunks } from '../src/channel.mjs';
-import { Receipts } from '../src/storage.mjs';
+import { Receipts, hash } from '../src/storage.mjs';
 
 const identity = {teamId:'T123456', appId:'A123456', botUserId:'U999999'};
 const event = (n = 1, text = 'Hello', channel = 'C123456', threadTs) => ({type:'event_callback', team_id:identity.teamId, api_app_id:identity.appId, event_id:`Ev12345${n}`, event:{type:'message',channel,channel_type:'channel',user:'U123456',text,ts:`1234567.00000${n}`,...(threadTs === undefined ? {} : {thread_ts:threadTs})}});
@@ -27,6 +27,7 @@ async function fixture(t, options = {}) {
       }
       return structuredClone(value);
     }
+    if (path === '/v1/runs' && body === undefined) return {runs:[...runs.values()],nextCursor:null};
     if (path === '/v1/runs') {
       const id = `r_app_${String(runs.size + 1).padStart(64, '0')}`;
       const run = {id,scope:body.scope,status:'completed',messages:[{id:'reply',text:`Reply to ${body.text}`}],approvals:[]}; runs.set(id,run); return run;
@@ -374,4 +375,116 @@ test('missing Claude catalog leaves the selected Opus xhigh chat unchanged', asy
   assert.equal(f.calls.filter(c=>c.body?.action).length, 0);
   await f.agent.receive(event(2, '!ez ai'));
   assert.match(f.sends.at(-1).text, /claude \/ opus \/ xhigh/);
+});
+
+const scheduled = (n, scope, extra = {}) => ({id:`r_schedule_${String(n).padStart(64,'0')}`,scope,status:'completed',messages:[{id:'m1',text:`Scheduled ${n}`}],approvals:[],originRunId:`r_app_${'1'.padStart(64,'0')}`,...extra});
+// A first sweep ignores runs that already finished; most tests exercise a running sweep.
+async function primed(t, options) { const f = await fixture(t, options); await f.receipts.saveBaseline([]); return f; }
+async function until(check) { for (let i=0;i<200&&!check();i++) await new Promise(r=>setTimeout(r,10)); assert(check()); }
+test('replies of a schedule created in a channel or thread are rendered once into that channel or thread', async t => {
+  const f=await primed(t), root='1234567.111111';
+  const channelRun=scheduled(1,scopeFor(identity.teamId,'C123456')), threadRun=scheduled(2,scopeFor(identity.teamId,'C123456',root));
+  f.runs.set(channelRun.id,channelRun);f.runs.set(threadRun.id,threadRun);
+  await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>[s.channel,s.text,s.threadTs]),[['C123456','Scheduled 1',undefined],['C123456','Scheduled 2',root]]);
+  assert.deepEqual((await f.receipts.load()).map(r=>[r.key,r.closed,r.scheduled,r.threadTs]),[[`run:${channelRun.id}`,true,true,undefined],[`run:${threadRun.id}`,true,true,root]]);
+  assert(!(await readFile(join(f.directory,'receipts.json'),'utf8')).includes('Scheduled'));
+  const restarted=new Channel({identity,receipts:f.receipts,slack:f.agent.slack,call:f.agent.call,connection:{}});
+  t.after(()=>restarted.close());await restarted.sweep();assert.equal(f.sends.length,2);
+});
+test('only this workspace\'s runs that no Slack message admitted and that have something to say are rendered', async t => {
+  const f=await primed(t), ok=scopeFor(identity.teamId,'C123456');
+  for (const run of [scheduled(1,scopeFor('T654321','C123456')),scheduled(2,'telegram'),scheduled(3,`slack:${identity.teamId}:C123456:thread:bad`),scheduled(4,`slack:${identity.teamId}:C123456:extra:1.2`),
+    scheduled(5,ok,{messages:[]}),scheduled(6,ok,{id:'../escape'}),{id:`r_app_${'9'.padStart(64,'0')}`,scope:ok,status:'completed',messages:[{id:'x',text:'Inbound'}],approvals:[]}]) f.runs.set(run.id,run);
+  await f.agent.sweep();
+  assert.equal(f.sends.length,0);assert.equal((await f.receipts.load()).length,0);
+});
+test('a running scheduled run delivers new messages as they appear and reports its failure once', async t => {
+  const f=await primed(t), run=scheduled(1,scopeFor(identity.teamId,'C123456'),{status:'running',messages:[{id:'a',text:'First'}]});
+  f.runs.set(run.id,run);await f.agent.sweep();
+  assert.equal((await f.receipts.load())[0].closed,undefined);
+  run.messages.push({id:'b',text:'Second'});run.status='failed';
+  await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['First','Second','Ez run failed.']);assert.equal((await f.receipts.load())[0].closed,true);
+});
+test('scheduled receipts are background work that stop, status and restart leave alone', async t => {
+  const f=await primed(t), run=scheduled(1,scopeFor(identity.teamId,'C123456'),{status:'running'});
+  f.runs.set(run.id,run);await f.agent.sweep();
+  await f.agent.receive(event(1,'!ez stop'));
+  assert.equal(f.calls.filter(c=>c.path.endsWith('/cancel')).length,0);assert.match(f.sends.at(-1).text,/Cancellation requested for 0 run/);
+  await f.agent.receive(event(2,'!ez status'));
+  assert.match(f.sends.at(-1).text,/Work: 0 running; 0 queued; 0 finished awaiting delivery; 0 unavailable/);
+  await f.agent.resumeDelivery();assert.equal(f.agent.watching.size,0);
+  assert(f.calls.every(c=>!c.path.startsWith(`/v1/runs/${run.id}`)));
+});
+test('an uncertain scheduled send is not retried by a later sweep', async t => {
+  const f=await primed(t,{send:()=>{throw Object.assign(Error('Lost provider response'),{uncertain:true});}});
+  const run=scheduled(1,scopeFor(identity.teamId,'C123456'));f.runs.set(run.id,run);
+  await f.agent.sweep();await f.agent.sweep();
+  assert.equal(f.sends.length,1);const row=(await f.receipts.load())[0];assert.equal(row.uncertain,true);assert.equal(row.issue,'slack_delivery_unconfirmed');
+});
+test('the sweep loop renders on its own timer, reports an unavailable run list and stops on close', async t => {
+  const run=scheduled(1,scopeFor(identity.teamId,'C123456'));let failing=true;
+  const f=await primed(t,{call:async path=>{if(failing)throw Error('Core unavailable');assert.equal(path,'/v1/runs');return {runs:[run],nextCursor:null};}});
+  f.agent.startSweep(10);f.agent.startSweep(10);
+  await until(()=>f.agent.sweepIssue===true);assert.equal(f.sends.length,0);
+  failing=false;await until(()=>f.sends.length===1&&f.agent.sweepIssue===false);
+  f.agent.close();await new Promise(r=>setTimeout(r,30));
+  const calls=f.calls.length;await new Promise(r=>setTimeout(r,50));
+  assert.equal(f.calls.length,calls);assert.equal(f.sends.length,1);
+});
+test('the first sweep never replays finished results but renders work still running, then everything new', async t => {
+  const scope=scopeFor(identity.teamId,'C123456'), old=scheduled(1,scope), failed=scheduled(2,scope,{status:'failed',messages:[]}), live=scheduled(3,scope,{status:'running'});
+  const f=await fixture(t);for(const run of [old,failed,live])f.runs.set(run.id,run);
+  await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['Scheduled 3']);assert.deepEqual(await f.receipts.loadBaseline(),[old.id,failed.id]);
+  const fresh=scheduled(4,scope);f.runs.set(fresh.id,fresh);live.status='completed';
+  await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['Scheduled 3','Scheduled 4']);
+  f.runs.delete(old.id);await f.agent.sweep();assert.deepEqual(await f.receipts.loadBaseline(),[failed.id]);
+  const restarted=new Channel({identity,receipts:f.receipts,slack:f.agent.slack,call:f.agent.call,connection:{}});
+  t.after(()=>restarted.close());await restarted.sweep();assert.equal(f.sends.length,2);
+});
+test('a definite scheduled send failure is closed so it can be evicted, and is not retried', async t => {
+  const f=await primed(t,{send:()=>{throw Object.assign(Error('Slack: not_in_channel'),{providerCode:'not_in_channel'});}});
+  const run=scheduled(1,scopeFor(identity.teamId,'C123456'));f.runs.set(run.id,run);
+  await f.agent.sweep();await f.agent.sweep();
+  const row=(await f.receipts.load())[0];assert.equal(f.sends.length,1);
+  assert.equal(row.closed,true);assert.notEqual(row.uncertain,true);assert.equal(row.issue,'slack_delivery_rejected');
+});
+test('a failed run that core re-queues under the same ID still delivers its later reply', async t => {
+  const f=await primed(t), run=scheduled(1,scopeFor(identity.teamId,'C123456'),{status:'failed',messages:[]});f.runs.set(run.id,run);
+  await f.agent.sweep();assert.deepEqual(f.sends.map(s=>s.text),['Ez run failed.']);assert.equal((await f.receipts.load())[0].closed,true);
+  run.status='queued';await f.agent.sweep();
+  run.status='completed';run.messages=[{id:'late',text:'Recovered reply'}];await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['Ez run failed.','Recovered reply']);assert.equal((await f.receipts.load())[0].closed,true);
+});
+test('an open scheduled receipt whose run left the list is closed, even an uncertain one, so it can be evicted', async t => {
+  const f=await primed(t), scope=scopeFor(identity.teamId,'C123456'), gone=scheduled(1,scope,{status:'running'}), unsure=scheduled(2,scope,{status:'running'});
+  f.runs.set(gone.id,gone);f.runs.set(unsure.id,unsure);await f.agent.sweep();
+  await f.receipts.change(`run:${unsure.id}`,r=>{r.uncertain=true;r.issue='slack_delivery_unconfirmed';});
+  await f.agent.sweep();assert.equal((await f.receipts.load()).find(r=>r.runId===unsure.id).uncertain,true);
+  f.runs.clear();await f.agent.sweep();
+  for(const row of await f.receipts.load()){assert.equal(row.closed,true);assert.equal(row.uncertain,false);}
+  assert.equal((await f.receipts.load()).find(r=>r.runId===unsure.id).issue,'slack_delivery_unconfirmed');
+});
+test('a half-sent or unconfirmed scheduled message resumes or is flagged, never closed as delivered', async t => {
+  const scope=scopeFor(identity.teamId,'C123456'), big=scheduled(1,scope,{messages:[{id:'m1',text:'x'.repeat(5000)}]}), unsure=scheduled(2,scope,{messages:[{id:'m2',text:'Hello'}]});
+  const f=await primed(t);f.runs.set(big.id,big);f.runs.set(unsure.id,unsure);
+  const place={channel:'C123456',scope,scheduled:true};
+  await f.receipts.change(`run:${big.id}`,r=>Object.assign(r,place,{runId:big.id,sends:[{key:'m1:0',hash:hash(chunks('x'.repeat(5000))[0]),clientId:'c',state:'accepted',ts:'1.2'}]}));
+  await f.receipts.change(`run:${unsure.id}`,r=>Object.assign(r,place,{runId:unsure.id,sends:[{key:'m2:0',hash:(0,hash)('Hello'),clientId:'c',state:'uncertain'}]}));
+  await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text.length),[1100]);
+  const rows=await f.receipts.load(), a=rows.find(r=>r.runId===big.id), b=rows.find(r=>r.runId===unsure.id);
+  assert.equal(a.closed,true);assert.equal(a.sends.length,2);
+  assert.equal(b.uncertain,true);assert.equal(b.issue,'result_or_delivery_unavailable');assert.equal(b.closed,undefined);
+});
+test('a finished run baselined at the first sweep is released when core re-queues it', async t => {
+  const scope=scopeFor(identity.teamId,'C123456'), run=scheduled(1,scope,{status:'failed',messages:[]});
+  const f=await fixture(t);f.runs.set(run.id,run);await f.agent.sweep();
+  assert.deepEqual(await f.receipts.loadBaseline(),[run.id]);assert.equal(f.sends.length,0);
+  run.status='running';await f.agent.sweep();assert.deepEqual(await f.receipts.loadBaseline(),[]);
+  run.status='completed';run.messages=[{id:'late',text:'Recovered reply'}];await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['Recovered reply']);
 });
