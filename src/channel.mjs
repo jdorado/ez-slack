@@ -7,6 +7,8 @@ import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { hash } from './storage.mjs';
 import { controls as controlCommands, controlHelp } from './commands.mjs';
 
+// An error whose message is safe to show the agent through the service socket.
+export class PostError extends Error {}
 export const validThreadTs = value => typeof value === 'string' && /^\d{1,20}\.\d{1,20}$/.test(value);
 export const scopeFor = (team, channel, threadTs) => `slack:${team}:${channel}${threadTs === undefined ? '' : `:thread:${threadTs}`}`;
 // Inverse of scopeFor for this workspace; any other scope is not ours to render.
@@ -122,7 +124,7 @@ export class Channel {
           await this.receipts.change(input.key, r => { delete r.issue; r.uncertain = false; });
         }
         let run;
-        try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: input.text, ...(attachment ? {attachment} : {}) }); }
+        try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: await this.quoted(input), ...(attachment ? {attachment} : {}) }); }
         catch (e) {
           await this.receipts.change(input.key, r => { r.uncertain = e.admitted !== false; if (e.runId) r.runId = e.runId; r.issue = 'admission_unconfirmed'; });
           throw e;
@@ -199,6 +201,44 @@ export class Channel {
     await this.core(path, { ...action, expectedSession: controls.activeSessionId });
     const readback = await this.core(path);
     return `This ${place}: ${presetText(selectedPreset(readback))}.`;
+  }
+  // A thread session starts without history. When the first message of one answers this bot's own message, quote that
+  // message so the agent knows what is being answered. Any failure admits the plain text.
+  async quoted(input) {
+    if (input.threadTs === undefined || input.nativeControl) return input.text;
+    try {
+      if ((await this.receipts.load()).some(r => r.scope === input.scope && r.runId)) return input.text;
+      const root = await this.slack.threadRoot(input.channel, input.threadTs);
+      if (!root || root.user !== this.identity.botUserId || !root.text.trim()) return input.text;
+      const text = `Replying to your Slack message:\n${root.text.split('\n').map(line => `> ${line}`).join('\n')}\n\n${input.text}`;
+      return text.length <= 16000 ? text : input.text;
+    } catch { return input.text; }
+  }
+  // One message into a channel this bot belongs to, optionally inside a thread. The key makes it once-only: reusing it
+  // returns the first result and never resends, and an uncertain or rejected send is never replayed.
+  async post(args) {
+    const { channel, threadTs, text, key } = args ?? {};
+    if (Object.keys(args ?? {}).some(k => !['channel', 'threadTs', 'text', 'key'].includes(k)) || !/^[CG][A-Z0-9]{5,40}$/.test(channel ?? '') ||
+        (threadTs !== undefined && !validThreadTs(threadTs)) || !/^[A-Za-z0-9_.-]{1,90}$/.test(key ?? '') || typeof text !== 'string' || !text.trim()) throw new PostError('Supply --channel C…, --key KEY and --text TEXT (optional --thread ROOT_TS)');
+    if (chunks(text).length !== 1) throw new PostError('Post text must be 3900 characters or fewer');
+    if (/<!(?:channel|here|everyone)\b/.test(text)) throw new PostError('Channel-wide mentions are not allowed in a post');
+    const rkey = `post:${key}`, fingerprint = hash(JSON.stringify([channel, threadTs ?? null, text]));
+    const result = row => ({ channel: row.channel, ts: row.sends[0].ts, ...(row.threadTs === undefined ? {} : {threadTs: row.threadTs}), state: row.sends[0].state });
+    const known = (await this.receipts.load()).find(r => r.key === rkey);
+    if (known) {
+      if (known.inputHash !== fingerprint) throw new PostError('This key was already used for a different post; use a new key');
+      if (known.sends[0]?.state === 'accepted') return { ...result(known), duplicate: true };
+      // No send record means the attempt stopped before any dispatch, so it is safe to carry on.
+      if (known.sends.length) throw new PostError('An earlier post with this key is unconfirmed or was rejected and is not resent; check ez slack receipts --key ' + rkey + ' and use a new key');
+    }
+    let member;
+    try { member = await this.slack.channelMember(channel, this.identity.botUserId, this.identity.botUserId); }
+    catch (e) { throw new PostError(`Channel access unconfirmed${/^[a-z_]{1,80}$/.test(e.providerCode ?? '') ? `: ${e.providerCode}` : ''}`); }
+    if (!member) throw new PostError('This bot is not a member of that channel; invite it first');
+    const receipt = known ?? await this.receipts.change(rkey, r => Object.assign(r, { channel, inputHash: fingerprint, ...(threadTs === undefined ? {} : {threadTs}) }));
+    try { await this.deliver(receipt, 'post', text); }
+    catch (e) { throw new PostError(e.uncertain ? 'Slack did not confirm the post; it is not resent. Check ez slack receipts --key ' + rkey : `Slack rejected the post${/^[a-z_]{1,80}$/.test(e.providerCode ?? '') ? `: ${e.providerCode}` : ''}; use a new key after fixing the cause`); }
+    return result(await this.receipts.change(rkey, r => { r.closed = true; }));
   }
   async deliver(receipt, messageId, text) {
     const parts = chunks(text);

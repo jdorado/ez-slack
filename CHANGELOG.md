@@ -2,6 +2,8 @@
 
 ## 0.1.0-beta.4
 
+- Add `ez slack post --channel C… --key KEY --text TEXT [--thread ROOT_TS]`: any run can post one message (3900 characters at most) into a channel the bot belongs to. It is once-only per key (reuse returns the first result, an uncertain or rejected send is never replayed), refuses channel-wide mentions, and records only a hash in `post:KEY` receipts. The first reply in a thread under the bot's own message is admitted with that message quoted, so the agent knows what is being answered; this reads the root through `conversations.replies` with the existing history scopes. The manifest example now shows `post`.
+
 - Post the replies of a schedule created in a channel or thread into that channel or thread. Core already binds such a schedule to its Slack scope and queues its replies for this application; the plugin never read them, so scheduled work finished silently. A sweep every 15 seconds lists the binding's newest 100 runs and renders each Slack-scoped run that no Slack message admitted, once, through the same receipts, chunking and no-resend rules as a reply. A run core re-queues under the same ID (quota retry) still delivers its later reply. Scheduled runs stay background work: `!ez stop` and `!ez status` ignore them.
 - The first sweep ignores runs that had already finished, so an upgrade does not replay old results (`scheduled-baseline.json` in the private volume).
 - A definite scheduled send failure and a run that left the newest 100 close their receipts (an uncertain one too, keeping its issue and send states) so they are evicted instead of filling the 1000-receipt capacity that blocks inbound messages.

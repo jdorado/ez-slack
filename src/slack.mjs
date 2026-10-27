@@ -15,7 +15,7 @@ async function exclusive(work) {
 export class Slack {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; this.sending = new Map(); this.lastSent = new Map(); }
   async call(method, body = {}, token = this.token) {
-    if (!['auth.test', 'apps.connections.open', 'chat.postMessage', 'conversations.info', 'conversations.members', 'files.info'].includes(method)) throw Error('Unsupported Slack operation');
+    if (!['auth.test', 'apps.connections.open', 'chat.postMessage', 'conversations.info', 'conversations.members', 'conversations.replies', 'files.info'].includes(method)) throw Error('Unsupported Slack operation');
     const reading = method.startsWith('conversations.') || method === 'files.info';
     const url = new URL(`https://slack.com/api/${method}`);
     if (reading) url.search = new URLSearchParams(body).toString();
@@ -88,6 +88,12 @@ export class Slack {
       cursor = page.response_metadata?.next_cursor;
     } while (cursor);
     return false;
+  }
+  // The root message of a thread, to quote it for the agent; null when Slack does not return it.
+  async threadRoot(channel, ts) {
+    const data = await this.call('conversations.replies', {channel, ts, limit: 1, inclusive: true});
+    const root = data.messages?.[0];
+    return root?.ts === ts ? { user: root.user, text: typeof root.text === 'string' ? root.text : '' } : null;
   }
   async send(channel, text, key, threadTs) {
     if (threadTs !== undefined && !validThreadTs(threadTs)) throw Error('Invalid Slack thread timestamp');
