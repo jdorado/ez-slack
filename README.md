@@ -233,8 +233,9 @@ run at the same moment. The same key with different content is refused, and an
 unconfirmed or rejected send is never replayed under its key; inspect
 `ez slack receipts --key post:KEY` and use a new key after fixing the cause.
 Receipts (`post:KEY`) hold a hash of the content, never the text. A rejected post
-closes its receipt; an unconfirmed one closes after 24 hours, and while 50 are
-unresolved new posts are refused, so a failing loop cannot fill receipt capacity.
+closes its receipt; an unconfirmed one is closed by the next new post made after 24
+hours, and while 50 are unresolved new posts are refused, so a failing loop cannot
+fill receipt capacity (a burst of parallel posts can overshoot the 50 by its size).
 
 A human reply in the thread under a top-level post reaches the agent like any
 thread message: its own native session, delivered back into that thread. Because
@@ -245,8 +246,8 @@ return the root, the plain reply is admitted. The lookup is marked
 `quote_pending` in the receipt while it runs, like an attachment download. The
 quote needs the history scopes already in the generated manifest. Only a top-level
 post starts a new thread session: a post made with `--thread` into a thread that
-already has a conversation is not quoted, and a thread with several bot messages
-quotes only its root.
+already has a conversation, or that a human started, is not quoted, and a thread
+with several bot messages quotes only its root.
 
 ## State, recovery and limits
 
