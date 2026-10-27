@@ -46,6 +46,7 @@ export function chunks(text) {
   if (part) result.push(part);
   return result;
 }
+const approvalText = 'This run needs an explicit Ez approval. Slack approval controls are not available in this version.';
 const presetText = p => p ? [`${p.cli}${p.authProfile ? `@${p.authProfile}` : ''}`, p.model, p.effort].filter(Boolean).join(' / ') : 'Default AI';
 const selectedPreset = c => c.ai?.presets?.find(p => p.id === c.ai.selectedId);
 export class Channel {
@@ -243,7 +244,7 @@ export class Channel {
     for (const m of run.messages ?? []) if (typeof m.id === 'string' && typeof m.text === 'string' && m.text.trim()) await this.deliver(receipt, m.id, m.text);
     // Approval decisions are not inferred from chat. v1 explicitly stops at this unsupported surface.
     if (run.approvals?.some(a => a.state === 'pending')) {
-      await this.deliver(receipt, 'approval-required', 'This run needs an explicit Ez approval. Slack approval controls are not available in this version.');
+      await this.deliver(receipt, 'approval-required', approvalText);
     }
     if (!['completed', 'failed', 'cancelled'].includes(run.status)) return false;
     if (run.status !== 'completed') await this.deliver(receipt, 'terminal', `Ez run ${run.status}.`);
@@ -256,19 +257,20 @@ export class Channel {
     const { runs } = await this.core('/v1/runs');
     if (!Array.isArray(runs)) throw Error('Ez run list invalid');
     const rows = await this.receipts.load(), known = new Map(rows.map(r => [r.key, r]));
-    const ignored = await this.receipts.loadBaseline(), seen = new Set(), finished = [];
+    const ignored = await this.receipts.loadBaseline(), seen = new Set(), live = new Set(), finished = [];
     for (const run of runs) {
       const place = /^r_[a-z0-9_]{1,88}$/.test(run?.id ?? '') && !run.id.startsWith('r_app_') ? scopeParts(run.scope, this.identity.teamId) : null;
       if (!place) continue;
       const key = `run:${run.id}`, receipt = known.get(key), terminal = ['completed', 'failed', 'cancelled'].includes(run.status);
-      seen.add(run.id);
+      seen.add(run.id); if (!terminal) live.add(run.id);
       // The first sweep never replays results that finished before it started (an upgrade, or lost receipts).
-      if (ignored === null ? terminal && !receipt : ignored.includes(run.id)) { if (ignored === null) finished.push(run.id); continue; }
+      if (ignored === null ? terminal && !receipt : terminal && ignored.includes(run.id)) { if (ignored === null) finished.push(run.id); continue; }
       if (receipt && (receipt.uncertain || receipt.issue)) continue;
       // Core can re-queue a failed run under the same ID (quota retry), so a closed receipt only means "nothing unsent".
-      const sent = id => receipt?.sends.some(s => s.key.startsWith(`${id}:`));
-      const unsent = run.messages?.some(m => typeof m?.id === 'string' && typeof m.text === 'string' && m.text.trim() && !sent(m.id)) ||
-        (run.approvals?.some(a => a.state === 'pending') && !sent('approval-required')) || (['failed', 'cancelled'].includes(run.status) && !sent('terminal'));
+      // Delivered means every chunk is accepted: a half-sent or unconfirmed message goes back through deliver, which resumes or flags it.
+      const done = (id, text) => chunks(text).every((_, i) => receipt?.sends.some(s => s.key === `${id}:${i}` && s.state === 'accepted'));
+      const unsent = run.messages?.some(m => typeof m?.id === 'string' && typeof m.text === 'string' && m.text.trim() && !done(m.id, m.text)) ||
+        (run.approvals?.some(a => a.state === 'pending') && !done('approval-required', approvalText)) || (['failed', 'cancelled'].includes(run.status) && !done('terminal', `Ez run ${run.status}.`));
       if (!unsent) { if (receipt && !receipt.closed && terminal) await this.receipts.change(key, r => { r.closed = true; }); continue; }
       try {
         const open = await this.receipts.change(key, r => {
@@ -278,13 +280,16 @@ export class Channel {
         await this.render(open, run);
       } catch {
         // A definite failure is not retried; close it so it can be evicted instead of filling receipt capacity.
-        await this.receipts.change(key, r => { r.issue ??= 'result_or_delivery_unavailable'; if (!r.uncertain) r.closed = true; }).catch(() => {});
+        await this.receipts.change(key, r => { r.issue ??= 'result_or_delivery_unavailable'; if (r.sends.some(s => s.state === 'uncertain')) r.uncertain = true; if (!r.uncertain) r.closed = true; }).catch(() => {});
       }
     }
-    // A scheduled run that left the newest page can no longer be rendered; do not leave its receipt open forever.
-    for (const r of rows) if (r.scheduled && !r.closed && !r.uncertain && !seen.has(r.runId)) await this.receipts.change(r.key, x => { x.closed = true; });
+    // A scheduled run that left the newest page can no longer be rendered. Close its receipt, even an uncertain one (the
+    // issue and send states stay as the record): nobody clears these at schedule rate and open rows fill receipt capacity.
+    for (const r of rows) if (r.scheduled && !r.closed && !seen.has(r.runId)) await this.receipts.change(r.key, x => { x.closed = true; x.uncertain = false; });
+    // A baselined run stays ignored while it is finished; one that core re-queues (quota retry) is released.
+    const keep = ignored?.filter(id => seen.has(id) && !live.has(id));
     if (ignored === null) await this.receipts.saveBaseline(finished);
-    else if (ignored.some(id => !seen.has(id))) await this.receipts.saveBaseline(ignored.filter(id => seen.has(id)));
+    else if (keep.length !== ignored.length) await this.receipts.saveBaseline(keep);
   }
   startSweep(intervalMs = 15000) {
     if (this.closed || this.sweeper) return;

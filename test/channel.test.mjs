@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Channel, incoming, slashIncoming, scopeFor, chunks } from '../src/channel.mjs';
-import { Receipts } from '../src/storage.mjs';
+import { Receipts, hash } from '../src/storage.mjs';
 
 const identity = {teamId:'T123456', appId:'A123456', botUserId:'U999999'};
 const event = (n = 1, text = 'Hello', channel = 'C123456', threadTs) => ({type:'event_callback', team_id:identity.teamId, api_app_id:identity.appId, event_id:`Ev12345${n}`, event:{type:'message',channel,channel_type:'channel',user:'U123456',text,ts:`1234567.00000${n}`,...(threadTs === undefined ? {} : {thread_ts:threadTs})}});
@@ -459,10 +459,32 @@ test('a failed run that core re-queues under the same ID still delivers its late
   run.status='completed';run.messages=[{id:'late',text:'Recovered reply'}];await f.agent.sweep();await f.agent.sweep();
   assert.deepEqual(f.sends.map(s=>s.text),['Ez run failed.','Recovered reply']);assert.equal((await f.receipts.load())[0].closed,true);
 });
-test('an open scheduled receipt whose run left the list is closed; an uncertain one stays', async t => {
+test('an open scheduled receipt whose run left the list is closed, even an uncertain one, so it can be evicted', async t => {
   const f=await primed(t), scope=scopeFor(identity.teamId,'C123456'), gone=scheduled(1,scope,{status:'running'}), unsure=scheduled(2,scope,{status:'running'});
   f.runs.set(gone.id,gone);f.runs.set(unsure.id,unsure);await f.agent.sweep();
-  await f.receipts.change(`run:${unsure.id}`,r=>{r.uncertain=true;});
+  await f.receipts.change(`run:${unsure.id}`,r=>{r.uncertain=true;r.issue='slack_delivery_unconfirmed';});
+  await f.agent.sweep();assert.equal((await f.receipts.load()).find(r=>r.runId===unsure.id).uncertain,true);
   f.runs.clear();await f.agent.sweep();
-  const rows=await f.receipts.load();assert.equal(rows.find(r=>r.runId===gone.id).closed,true);assert.equal(rows.find(r=>r.runId===unsure.id).closed,undefined);
+  for(const row of await f.receipts.load()){assert.equal(row.closed,true);assert.equal(row.uncertain,false);}
+  assert.equal((await f.receipts.load()).find(r=>r.runId===unsure.id).issue,'slack_delivery_unconfirmed');
+});
+test('a half-sent or unconfirmed scheduled message resumes or is flagged, never closed as delivered', async t => {
+  const scope=scopeFor(identity.teamId,'C123456'), big=scheduled(1,scope,{messages:[{id:'m1',text:'x'.repeat(5000)}]}), unsure=scheduled(2,scope,{messages:[{id:'m2',text:'Hello'}]});
+  const f=await primed(t);f.runs.set(big.id,big);f.runs.set(unsure.id,unsure);
+  const place={channel:'C123456',scope,scheduled:true};
+  await f.receipts.change(`run:${big.id}`,r=>Object.assign(r,place,{runId:big.id,sends:[{key:'m1:0',hash:hash(chunks('x'.repeat(5000))[0]),clientId:'c',state:'accepted',ts:'1.2'}]}));
+  await f.receipts.change(`run:${unsure.id}`,r=>Object.assign(r,place,{runId:unsure.id,sends:[{key:'m2:0',hash:(0,hash)('Hello'),clientId:'c',state:'uncertain'}]}));
+  await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text.length),[1100]);
+  const rows=await f.receipts.load(), a=rows.find(r=>r.runId===big.id), b=rows.find(r=>r.runId===unsure.id);
+  assert.equal(a.closed,true);assert.equal(a.sends.length,2);
+  assert.equal(b.uncertain,true);assert.equal(b.issue,'result_or_delivery_unavailable');assert.equal(b.closed,undefined);
+});
+test('a finished run baselined at the first sweep is released when core re-queues it', async t => {
+  const scope=scopeFor(identity.teamId,'C123456'), run=scheduled(1,scope,{status:'failed',messages:[]});
+  const f=await fixture(t);f.runs.set(run.id,run);await f.agent.sweep();
+  assert.deepEqual(await f.receipts.loadBaseline(),[run.id]);assert.equal(f.sends.length,0);
+  run.status='running';await f.agent.sweep();assert.deepEqual(await f.receipts.loadBaseline(),[]);
+  run.status='completed';run.messages=[{id:'late',text:'Recovered reply'}];await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['Recovered reply']);
 });

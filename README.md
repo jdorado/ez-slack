@@ -210,7 +210,8 @@ uncertain send is never retried; a definite provider rejection (for example
 `not_in_channel`) drops that run's remaining replies, is recorded as an issue and
 is not retried. The 100-run window is shared with every Slack-admitted run: a
 scheduled run still working after 100 newer runs are created stops rendering and
-its receipt is closed. `ez slack doctor --json` reports
+its receipt is closed, even an uncertain one (its issue and send states remain as the
+record), so nothing at schedule rate fills the receipt capacity. `ez slack doctor --json` reports
 `scheduledReplies: {sweep: ok|unavailable, needAttention: N}` (receipts that are
 uncertain or have an issue).
 
