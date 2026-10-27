@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-beta.4
+
+- Post the replies of a schedule created in a channel or thread into that channel or thread. Core already binds such a schedule to its Slack scope and queues its replies for this application; the plugin never read them, so scheduled work finished silently. A sweep every 15 seconds lists the binding's newest 100 runs and renders each Slack-scoped run that no Slack message admitted, once, through the same receipts, chunking and no-resend rules as a reply. Scheduled runs stay background work: `!ez stop` and `!ez status` ignore them. `doctor` reports `scheduledReplies`. Still no arbitrary send.
+
 ## 0.1.0-beta.3
 
 - Requires Ez core 0.1.0-beta.50 or newer for the manifest example.

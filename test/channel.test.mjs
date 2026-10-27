@@ -27,6 +27,7 @@ async function fixture(t, options = {}) {
       }
       return structuredClone(value);
     }
+    if (path === '/v1/runs' && body === undefined) return {runs:[...runs.values()],nextCursor:null};
     if (path === '/v1/runs') {
       const id = `r_app_${String(runs.size + 1).padStart(64, '0')}`;
       const run = {id,scope:body.scope,status:'completed',messages:[{id:'reply',text:`Reply to ${body.text}`}],approvals:[]}; runs.set(id,run); return run;
@@ -374,4 +375,59 @@ test('missing Claude catalog leaves the selected Opus xhigh chat unchanged', asy
   assert.equal(f.calls.filter(c=>c.body?.action).length, 0);
   await f.agent.receive(event(2, '!ez ai'));
   assert.match(f.sends.at(-1).text, /claude \/ opus \/ xhigh/);
+});
+
+const scheduled = (n, scope, extra = {}) => ({id:`r_schedule_${String(n).padStart(64,'0')}`,scope,status:'completed',messages:[{id:'m1',text:`Scheduled ${n}`}],approvals:[],originRunId:`r_app_${'1'.padStart(64,'0')}`,...extra});
+async function until(check) { for (let i=0;i<200&&!check();i++) await new Promise(r=>setTimeout(r,10)); assert(check()); }
+test('replies of a schedule created in a channel or thread are rendered once into that channel or thread', async t => {
+  const f=await fixture(t), root='1234567.111111';
+  const channelRun=scheduled(1,scopeFor(identity.teamId,'C123456')), threadRun=scheduled(2,scopeFor(identity.teamId,'C123456',root));
+  f.runs.set(channelRun.id,channelRun);f.runs.set(threadRun.id,threadRun);
+  await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>[s.channel,s.text,s.threadTs]),[['C123456','Scheduled 1',undefined],['C123456','Scheduled 2',root]]);
+  assert.deepEqual((await f.receipts.load()).map(r=>[r.key,r.closed,r.scheduled,r.threadTs]),[[`run:${channelRun.id}`,true,true,undefined],[`run:${threadRun.id}`,true,true,root]]);
+  assert(!(await readFile(join(f.directory,'receipts.json'),'utf8')).includes('Scheduled'));
+  const restarted=new Channel({identity,receipts:f.receipts,slack:f.agent.slack,call:f.agent.call,connection:{}});
+  t.after(()=>restarted.close());await restarted.sweep();assert.equal(f.sends.length,2);
+});
+test('only this workspace\'s runs that no Slack message admitted and that have something to say are rendered', async t => {
+  const f=await fixture(t), ok=scopeFor(identity.teamId,'C123456');
+  for (const run of [scheduled(1,scopeFor('T654321','C123456')),scheduled(2,'telegram'),scheduled(3,`slack:${identity.teamId}:C123456:thread:bad`),scheduled(4,`slack:${identity.teamId}:C123456:extra:1.2`),
+    scheduled(5,ok,{messages:[]}),scheduled(6,ok,{id:'../escape'}),{id:`r_app_${'9'.padStart(64,'0')}`,scope:ok,status:'completed',messages:[{id:'x',text:'Inbound'}],approvals:[]}]) f.runs.set(run.id,run);
+  await f.agent.sweep();
+  assert.equal(f.sends.length,0);assert.equal((await f.receipts.load()).length,0);
+});
+test('a running scheduled run delivers new messages as they appear and reports its failure once', async t => {
+  const f=await fixture(t), run=scheduled(1,scopeFor(identity.teamId,'C123456'),{status:'running',messages:[{id:'a',text:'First'}]});
+  f.runs.set(run.id,run);await f.agent.sweep();
+  assert.equal((await f.receipts.load())[0].closed,undefined);
+  run.messages.push({id:'b',text:'Second'});run.status='failed';
+  await f.agent.sweep();await f.agent.sweep();
+  assert.deepEqual(f.sends.map(s=>s.text),['First','Second','Ez run failed.']);assert.equal((await f.receipts.load())[0].closed,true);
+});
+test('scheduled receipts are background work that stop, status and restart leave alone', async t => {
+  const f=await fixture(t), run=scheduled(1,scopeFor(identity.teamId,'C123456'),{status:'running'});
+  f.runs.set(run.id,run);await f.agent.sweep();
+  await f.agent.receive(event(1,'!ez stop'));
+  assert.equal(f.calls.filter(c=>c.path.endsWith('/cancel')).length,0);assert.match(f.sends.at(-1).text,/Cancellation requested for 0 run/);
+  await f.agent.receive(event(2,'!ez status'));
+  assert.match(f.sends.at(-1).text,/Work: 0 running; 0 queued; 0 finished awaiting delivery; 0 unavailable/);
+  await f.agent.resumeDelivery();assert.equal(f.agent.watching.size,0);
+  assert(f.calls.every(c=>!c.path.startsWith(`/v1/runs/${run.id}`)));
+});
+test('an uncertain scheduled send is not retried by a later sweep', async t => {
+  const f=await fixture(t,{send:()=>{throw Object.assign(Error('Lost provider response'),{uncertain:true});}});
+  const run=scheduled(1,scopeFor(identity.teamId,'C123456'));f.runs.set(run.id,run);
+  await f.agent.sweep();await f.agent.sweep();
+  assert.equal(f.sends.length,1);const row=(await f.receipts.load())[0];assert.equal(row.uncertain,true);assert.equal(row.issue,'slack_delivery_unconfirmed');
+});
+test('the sweep loop renders on its own timer, reports an unavailable run list and stops on close', async t => {
+  const run=scheduled(1,scopeFor(identity.teamId,'C123456'));let failing=true;
+  const f=await fixture(t,{call:async path=>{if(failing)throw Error('Core unavailable');assert.equal(path,'/v1/runs');return {runs:[run],nextCursor:null};}});
+  f.agent.startSweep(10);f.agent.startSweep(10);
+  await until(()=>f.agent.sweepIssue===true);assert.equal(f.sends.length,0);
+  failing=false;await until(()=>f.sends.length===1&&f.agent.sweepIssue===false);
+  f.agent.close();await new Promise(r=>setTimeout(r,30));
+  const calls=f.calls.length;await new Promise(r=>setTimeout(r,50));
+  assert.equal(f.calls.length,calls);assert.equal(f.sends.length,1);
 });

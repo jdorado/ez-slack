@@ -33,7 +33,10 @@ Invited dedicated channels each have a separate native scope; all their human
 members use this agent’s tool authority. Channel controls are `!ez help`,
 `!ez ai`, `!ez ai list`, `!ez ai CLI MODEL [EFFORT]`, `!ez ai effort EFFORT`,
 `!ez new`, `!ez stop`.
-Use core’s returned catalog. The plugin has no arbitrary send or model runner.
+Use core’s returned catalog. The plugin has no arbitrary send or model runner. A
+schedule created during a turn in a channel or thread posts its replies in that
+channel (top level) or thread; a schedule created elsewhere never posts to Slack.
+`receipts` shows them as `run:RUN_ID`; `!ez stop` and `!ez status` ignore them.
 Native Slack controls use the generated app-specific prefix, for example
 `/ez-annie`, followed by the same controls and arguments. The prefix alone shows
 help. Setup derives it from NAME; no channel-specific registration is needed.
