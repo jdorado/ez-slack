@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Read the installed Slack channel transport identity, receipts and per-channel or per-thread Ez settings; onboard the provider with private credentials.
+description: Post to a Slack channel the bot belongs to; read the installed Slack channel transport identity, receipts and per-channel or per-thread Ez settings; onboard the provider with private credentials.
 ---
 
 Use the owning agent’s bound `ez slack --help` for command discovery. This plugin
@@ -27,13 +27,20 @@ can use `slack configure-slack` with private JSON stdin: `teamId`, `appId`,
 `botToken`, `appToken`; it returns only verified identity, never credentials. Never request/store/repeat tokens in
 chat. After saving, stop the setup command, restart the plugin, run doctor, and
 verify one authorized human-message/native-reply exchange with a matching Slack
-channel/ts receipt. Setup permission is not arbitrary outbound-send authority.
+channel/ts receipt. Setup permission is not send authority; `ez slack post` is.
 
 Invited dedicated channels each have a separate native scope; all their human
 members use this agent’s tool authority. Channel controls are `!ez help`,
 `!ez ai`, `!ez ai list`, `!ez ai CLI MODEL [EFFORT]`, `!ez ai effort EFFORT`,
 `!ez new`, `!ez stop`.
-Use core’s returned catalog. The plugin has no arbitrary send or model runner. A
+Use core’s returned catalog. The plugin has no model runner. To start a
+conversation from any run, `ez slack post --channel C_ID --key KEY --text TEXT
+[--thread ROOT_TS]` posts one message (3900 characters at most) into a channel the
+bot belongs to, once per key (use a fresh key for each post): reusing a key returns
+the first result and never resends, and an error needs a new key after the cause is
+fixed. Channels shared outside the workspace and `<!…>` special mentions are
+refused. A reply in the thread under a top-level post reaches you as a new thread
+conversation whose first message quotes your post. A
 schedule created during a turn in a channel or thread posts its replies in that
 channel (top level) or thread; a schedule created elsewhere never posts to Slack.
 `receipts` shows them as `run:RUN_ID`; `!ez stop` and `!ez status` ignore them.

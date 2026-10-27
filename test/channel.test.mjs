@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Channel, incoming, slashIncoming, scopeFor, chunks } from '../src/channel.mjs';
+import { Channel, PostError, incoming, slashIncoming, scopeFor, chunks } from '../src/channel.mjs';
 import { Receipts, hash } from '../src/storage.mjs';
 
 const identity = {teamId:'T123456', appId:'A123456', botUserId:'U999999'};
@@ -487,4 +487,104 @@ test('a finished run baselined at the first sweep is released when core re-queue
   run.status='running';await f.agent.sweep();assert.deepEqual(await f.receipts.loadBaseline(),[]);
   run.status='completed';run.messages=[{id:'late',text:'Recovered reply'}];await f.agent.sweep();
   assert.deepEqual(f.sends.map(s=>s.text),['Recovered reply']);
+});
+
+test('post sends one message once per key, stores only a hash, and returns the Slack timestamp', async t => {
+  const f=await fixture(t), text='Question for Milan: A or B?';
+  const first=await f.agent.post({channel:'C123456',key:'q1',text});
+  assert.deepEqual(first,{channel:'C123456',ts:'1234567.999999',state:'accepted'});
+  const again=await f.agent.post({channel:'C123456',key:'q1',text});
+  assert.equal(again.duplicate,true);assert.equal(again.ts,first.ts);assert.equal(f.sends.length,1);
+  assert.equal(f.sends[0].text,text);assert.equal(f.sends[0].threadTs,undefined);
+  const row=(await f.receipts.load())[0];assert.equal(row.key,'post:q1');assert.equal(row.closed,true);
+  assert(!(await readFile(join(f.directory,'receipts.json'),'utf8')).includes('Milan'));
+  await assert.rejects(f.agent.post({channel:'C123456',key:'q1',text:'Different'}),/different post/);
+  const thread=await f.agent.post({channel:'C123456',key:'q2',text:'Follow-up',threadTs:'1234567.111111'});
+  assert.equal(thread.threadTs,'1234567.111111');assert.equal(f.sends.at(-1).threadTs,'1234567.111111');assert.equal(f.sends.length,2);
+});
+test('post refuses bad input, channels the bot is not in and channel-wide mentions without sending', async t => {
+  const f=await fixture(t,{member:async c=>c==='C123456'});
+  for (const args of [undefined,{},{channel:'C123456',text:'x'},{channel:'C123456',key:'k',text:' '},{channel:'../bad',key:'k',text:'x'},{channel:'C123456',key:'k:1',text:'x'},
+    {channel:'C123456',key:'k',text:'x',threadTs:'bad'},{channel:'C123456',key:'k',text:'x',extra:1},{channel:'C123456',key:'k',text:'x'.repeat(3901)},{channel:'C123456',key:'k',text:'Hi <!channel>'}])
+    await assert.rejects(f.agent.post(args),PostError);
+  await assert.rejects(f.agent.post({channel:'C654321',key:'k',text:'x'}),/not a member/);
+  assert.equal(f.sends.length,0);assert.equal((await f.receipts.load()).length,0);
+  const unknown=await fixture(t,{member:async()=>{throw Object.assign(Error('x'),{providerCode:'missing_scope'});}});
+  await assert.rejects(unknown.agent.post({channel:'C123456',key:'k',text:'x'}),/unconfirmed: missing_scope/);
+  await f.agent.post({channel:'C123456',key:'max',text:'x'.repeat(3900)});assert.equal(f.sends.length,1);
+});
+test('an uncertain or rejected post is never resent under the same key', async t => {
+  let mode='uncertain';
+  const f=await fixture(t,{send:()=>{throw mode==='uncertain'?Object.assign(Error('Lost provider response'),{uncertain:true}):Object.assign(Error('Slack: channel_not_found'),{providerCode:'channel_not_found'});}});
+  await assert.rejects(f.agent.post({channel:'C123456',key:'a',text:'x'}),/did not confirm the post; it is not resent/);
+  await assert.rejects(f.agent.post({channel:'C123456',key:'a',text:'x'}),/not resent/);
+  mode='rejected';
+  await assert.rejects(f.agent.post({channel:'C123456',key:'b',text:'x'}),/rejected the post: channel_not_found/);
+  await assert.rejects(f.agent.post({channel:'C123456',key:'b',text:'x'}),/not resent/);
+  assert.equal(f.sends.length,2);
+});
+test('a post that stopped before any dispatch carries on under the same key', async t => {
+  const f=await fixture(t);
+  await f.receipts.change('post:r1',r=>Object.assign(r,{channel:'C123456',inputHash:hash(JSON.stringify(['C123456',null,'Again']))}));
+  const result=await f.agent.post({channel:'C123456',key:'r1',text:'Again'});
+  assert.equal(f.sends.length,1);assert.equal(result.state,'accepted');assert.equal((await f.receipts.load()).length,1);
+});
+test('the first reply in a thread under the bot\'s own message quotes it for the agent, once', async t => {
+  const roots=new Map([['1234567.111111',{user:identity.botUserId,text:'Question for Milan: A or B?\nContext: 12 Main St'}],['1234567.222222',{user:'U123456',text:'A human root'}]]);
+  const f=await fixture(t);f.agent.slack.threadRoot=async(channel,ts)=>roots.get(ts)??null;
+  await f.agent.receive(event(1,'B please','C123456','1234567.111111'));
+  await f.agent.receive(event(2,'And also C','C123456','1234567.111111'));
+  await f.agent.receive(event(3,'Hi','C123456','1234567.222222'));
+  await f.agent.receive(event(4,'Plain channel message'));
+  await settled(f.agent);
+  assert.deepEqual(f.calls.filter(c=>c.path==='/v1/runs').map(c=>c.body.text),['Replying to your Slack message:\n> Question for Milan: A or B?\n> Context: 12 Main St\n\nB please','And also C','Hi','Plain channel message']);
+  assert(!(await readFile(join(f.directory,'receipts.json'),'utf8')).includes('Question for Milan'));
+});
+test('quoting never blocks admission: a failed or oversized root admits the plain reply', async t => {
+  const f=await fixture(t);
+  f.agent.slack.threadRoot=async()=>{throw Error('missing_scope');};
+  await f.agent.receive(event(1,'Plain','C123456','1234567.111111'));
+  f.agent.slack.threadRoot=async()=>({user:identity.botUserId,text:'q'.repeat(3900)});
+  await f.agent.receive(event(2,'x'.repeat(15000),'C123456','1234567.333333'));
+  await settled(f.agent);
+  assert.deepEqual(f.calls.filter(c=>c.path==='/v1/runs').map(c=>c.body.text.length),[5,15000]);
+});
+test('post refuses every Slack special mention but allows user mentions', async t => {
+  const f=await fixture(t);
+  for (const text of ['<!channel>','<!here>','<!everyone>','<!Channel>','<!subteam^S123|@eng>','<!date^1392734382^{date}|x>']) await assert.rejects(f.agent.post({channel:'C123456',key:'m',text}),/special mentions/);
+  await f.agent.post({channel:'C123456',key:'ok',text:'Hi <@U123456>'});assert.equal(f.sends.length,1);
+});
+test('concurrent posts with one key share one send, and other text under that key is refused while it runs', async t => {
+  let release;const gate=new Promise(resolve=>release=resolve);
+  const f=await fixture(t,{send:async()=>{await gate;return {channel:'C123456',ts:'1234567.999999',state:'accepted'};}});
+  const a=f.agent.post({channel:'C123456',key:'p',text:'x'}), b=f.agent.post({channel:'C123456',key:'p',text:'x'});
+  await assert.rejects(f.agent.post({channel:'C123456',key:'p',text:'other'}),/different post/);
+  release();const [first,second]=await Promise.all([a,b]);
+  assert.equal(f.sends.length,1);assert.equal(first.ts,second.ts);assert.equal(second.duplicate,true);assert.equal(first.duplicate,undefined);
+});
+test('a rejected post closes its row, and unresolved posts are bounded and age out', async t => {
+  let mode='reject';
+  const f=await fixture(t,{send:()=>{throw mode==='reject'?Object.assign(Error('Slack: ratelimited'),{providerCode:'ratelimited'}):Object.assign(Error('Lost provider response'),{uncertain:true});}});
+  await assert.rejects(f.agent.post({channel:'C123456',key:'r',text:'x'}),/rejected the post: ratelimited/);
+  assert.equal((await f.receipts.load())[0].closed,true);
+  mode='uncertain';
+  for (let i=0;i<50;i++) await assert.rejects(f.agent.post({channel:'C123456',key:`u${i}`,text:'x'}),/did not confirm/);
+  await assert.rejects(f.agent.post({channel:'C123456',key:'u50',text:'x'}),/Too many unresolved posts/);
+  assert.equal(f.sends.length,51);
+  await f.receipts.change('post:u0',r=>{r.createdAt=new Date(Date.now()-90_000_000).toISOString();});
+  await assert.rejects(f.agent.post({channel:'C123456',key:'u51',text:'x'}),/did not confirm/);
+  const aged=(await f.receipts.load()).find(r=>r.key==='post:u0');assert.equal(aged.closed,true);assert.equal(aged.uncertain,false);assert.equal(aged.issue,'slack_delivery_unconfirmed');
+});
+test('a duplicate of an accepted post whose final write was lost closes its row', async t => {
+  const f=await fixture(t), text='Again';
+  await f.receipts.change('post:d',r=>Object.assign(r,{channel:'C123456',inputHash:hash(JSON.stringify(['C123456',null,text])),sends:[{key:'post:0',hash:'h',clientId:'c',state:'accepted',channel:'C123456',ts:'1.2'}]}));
+  const result=await f.agent.post({channel:'C123456',key:'d',text});
+  assert.equal(result.duplicate,true);assert.equal(result.ts,'1.2');assert.equal(f.sends.length,0);assert.equal((await f.receipts.load())[0].closed,true);
+});
+test('the thread-root lookup is marked durable while it runs and cleared after', async t => {
+  const f=await fixture(t);let during;
+  f.agent.slack.threadRoot=async()=>{during=(await f.receipts.load()).at(-1);return {user:identity.botUserId,text:'Q'};};
+  await f.agent.receive(event(1,'A','C123456','1234567.111111'));await settled(f.agent);
+  assert.equal(during.issue,'quote_pending');assert.equal(during.uncertain,true);
+  const after=(await f.receipts.load()).at(-1);assert.equal(after.issue,undefined);assert.equal(after.uncertain,false);assert.match(after.runId,/^r_app_/);
 });

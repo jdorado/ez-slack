@@ -198,9 +198,8 @@ lists the binding's newest 100 runs and posts each Slack-scoped run that no Slac
 message admitted into its channel (top level) or thread, once. A failed or
 cancelled scheduled run posts `Ez run failed.` or `Ez run cancelled.`; a run that
 core re-queues under the same ID (quota retry) still delivers its later reply.
-This is the only way work the agent starts itself reaches Slack: there is still no
-arbitrary send, and a schedule created from Telegram or another channel never
-posts here. Scheduled runs are background work: `!ez stop` does not cancel them
+A schedule created from Telegram or another channel never posts here; to start a
+conversation from any run, use `post` below. Scheduled runs are background work: `!ez stop` does not cancel them
 and `!ez status` does not count them.
 
 The first sweep after install or upgrade never replays results that had already
@@ -214,6 +213,41 @@ its receipt is closed, even an uncertain one (its issue and send states remain a
 record), so nothing at schedule rate fills the receipt capacity. `ez slack doctor --json` reports
 `scheduledReplies: {sweep: ok|unavailable, needAttention: N}` (receipts that are
 uncertain or have an issue).
+
+## Posting
+
+```sh
+ez slack post --channel C_CHANNEL_ID --key QUESTION_KEY --text "Question for Milan: …" [--thread ROOT_TS]
+```
+
+Any run can post one message (3900 characters at most) into a channel the bot is
+a member of, at the top level or inside a thread. The bot's membership is checked
+first; DMs, channels shared outside the workspace and Slack special mentions
+(`<!…>`: channel, here, everyone, user groups) are refused, while user mentions
+(`<@U…>`) are allowed. The output is `{channel, ts, state}`.
+
+The key makes a post once-only while its receipt is retained (the newest 1000
+receipts), so use a fresh key for each post: reusing one with the same content
+returns the first result (`duplicate: true`) and never resends, even for calls that
+run at the same moment. The same key with different content is refused, and an
+unconfirmed or rejected send is never replayed under its key; inspect
+`ez slack receipts --key post:KEY` and use a new key after fixing the cause.
+Receipts (`post:KEY`) hold a hash of the content, never the text. A rejected post
+closes its receipt; an unconfirmed one is closed by the next new post made after 24
+hours, and while 50 are unresolved new posts are refused, so a failing loop cannot
+fill receipt capacity (a burst of parallel posts can overshoot the 50 by its size).
+
+A human reply in the thread under a top-level post reaches the agent like any
+thread message: its own native session, delivered back into that thread. Because
+that session starts without history, its first message is admitted with the bot's
+root message quoted above the reply (`Replying to your Slack message:` and the
+quoted lines); later messages in the thread are not quoted again. If Slack does not
+return the root, the plain reply is admitted. The lookup is marked
+`quote_pending` in the receipt while it runs, like an attachment download. The
+quote needs the history scopes already in the generated manifest. Only a top-level
+post starts a new thread session: a post made with `--thread` into a thread that
+already has a conversation, or that a human started, is not quoted, and a thread
+with several bot messages quotes only its root.
 
 ## State, recovery and limits
 
@@ -234,7 +268,7 @@ design. Native sessions/settings remain in core; stranded transport records need
 operator investigation, not an automated turn replay. `receipts` identifies
 uncertainty; reconnect/start does not prove recovery. No blind provider retries.
 
-Supports text, channel controls and one inbound PDF, JPEG/PNG/WebP image, or text/Markdown attachment per message (10 MiB maximum), through core’s shared Telegram/application staging path. Existing Slack apps must add `files:read` and reinstall the app. Remote files and multiple attachments are rejected explicitly. A file caption starting with `!ez` is an ordinary prompt for the agent, not a channel control; send controls as text-only messages. Temporary Slack failures while fetching a file get a "please resend" reply and are recorded as `attachment_unavailable`; an input interrupted mid-download stays visible as `attachment_pending` (unconfirmed) and is not replayed. No outbound attachments, reactions, approval buttons,
+Supports text, channel controls, `post` and one inbound PDF, JPEG/PNG/WebP image, or text/Markdown attachment per message (10 MiB maximum), through core’s shared Telegram/application staging path. Existing Slack apps must add `files:read` and reinstall the app. Remote files and multiple attachments are rejected explicitly. A file caption starting with `!ez` is an ordinary prompt for the agent, not a channel control; send controls as text-only messages. Temporary Slack failures while fetching a file get a "please resend" reply and are recorded as `attachment_unavailable`; an input interrupted mid-download stays visible as `attachment_pending` (unconfirmed) and is not replayed. No outbound attachments, reactions, approval buttons,
 DMs or agent-to-agent channels. A pending
 core approval is reported without inferring consent; cancel and use an existing
 supported owner surface when necessary. Slack app-token reconnects cannot be used

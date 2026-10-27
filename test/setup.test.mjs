@@ -302,3 +302,53 @@ test('the running service sweeps scheduled replies into Slack and doctor reports
   assert.deepEqual((await rpc(d,'doctor')).scheduledReplies,{sweep:'ok',needAttention:0});
   assert.equal((await rpc(d,'receipts'))[0].key,`run:${runId}`);
 });
+test('threadRoot reads the thread root through conversations.replies and ignores a mismatch',async()=>{
+  const urls=[];
+  const slack=new Slack('synthetic',async url=>{urls.push(String(url));return Response.json({ok:true,messages:[{ts:'1234567.111111',user:'U999999',text:'Root'}]});});
+  assert.deepEqual(await slack.threadRoot('C123456','1234567.111111'),{user:'U999999',text:'Root'});
+  assert.equal(await slack.threadRoot('C123456','1234567.222222'),null);
+  assert.match(urls[0],/conversations\.replies\?channel=C123456&ts=1234567\.111111&limit=1&inclusive=true/);
+});
+test('the service and CLI post once per key into a member channel and explain refusals',async t=>{
+  const d=await dir(t), posts=[];
+  const core=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(req.url==='/v1/runs'?{runs:[],nextCursor:null}:{bindingId:'synthetic'}));});
+  await new Promise(resolve=>core.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>core.close(resolve)));
+  await saveConnection(d,{url:`http://127.0.0.1:${core.address().port}`,token:'a'.repeat(43),privateHttp:true});
+  await saveSlack(d,config,{call:async m=>m==='auth.test'?{team_id:config.teamId,user_id:'U123456',bot_id:'B123456'}:{url:'wss://synthetic'}});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,args)=>{
+    const path=new URL(url).pathname;
+    if(String(url)==='https://slack.com/api/auth.test')return Response.json({ok:true,team_id:config.teamId,user_id:'U123456',bot_id:'B123456'});
+    if(path==='/api/conversations.info')return Response.json({ok:true,channel:{id:new URL(url).searchParams.get('channel'),is_channel:true}});
+    if(path==='/api/conversations.members')return Response.json({ok:true,members:['U123456']});
+    if(path==='/api/chat.postMessage'){const body=JSON.parse(args.body);posts.push(body);return Response.json({ok:true,channel:body.channel,ts:'1234567.999999',...(body.thread_ts?{message:{thread_ts:body.thread_ts}}:{})});}
+    return originalFetch(url,args);
+  };
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const socket=new EventEmitter();socket.start=async()=>socket.emit('connected');socket.disconnect=async()=>{};
+  const service=await serve(d,{createSocket:()=>socket});t.after(()=>service.close());
+  const first=await rpc(d,'post',{channel:'C123456',key:'q1',text:'Hello owners'});
+  assert.deepEqual(first,{channel:'C123456',ts:'1234567.999999',state:'accepted'});
+  assert.equal((await rpc(d,'post',{channel:'C123456',key:'q1',text:'Hello owners'})).duplicate,true);
+  await assert.rejects(rpc(d,'post',{channel:'C123456',key:'q1',text:'Other'}),/different post/);
+  await assert.rejects(rpc(d,'post',{channel:'C123456',key:'bad key',text:'x'}),/Supply --channel/);
+  const cli=(...args)=>new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[new URL('../bin/ez-slack.mjs',import.meta.url).pathname,...args],{env:{...process.env,EZ_SLACK_STATE:d},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';
+    child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));
+  });
+  const ok=await cli('post','--channel','C123456','--key','q2','--text','Via CLI','--thread','1234567.111111');
+  assert.equal(ok.code,0,ok.stderr);assert.deepEqual(JSON.parse(ok.stdout).data,{channel:'C123456',ts:'1234567.999999',threadTs:'1234567.111111',state:'accepted'});
+  const refused=await cli('post','--channel','C123456','--key','q1','--text','Other');
+  assert.equal(refused.code,1);assert.match(refused.stderr,/different post/);
+  const bullet=await cli('post','--channel','C123456','--key','q3','--text','- a bullet\n- another');
+  assert.equal(bullet.code,0,bullet.stderr);
+  assert.deepEqual(posts.map(p=>[p.channel,p.text,p.thread_ts]),[['C123456','Hello owners',undefined],['C123456','Via CLI','1234567.111111'],['C123456','- a bullet\n- another',undefined]]);
+});
+test('channelMember can refuse channels shared outside the workspace',async()=>{
+  for (const flag of ['is_shared','is_ext_shared','is_org_shared','is_pending_ext_shared']) {
+    const slack=new Slack('synthetic',async url=>new URL(url).pathname==='/api/conversations.info'
+      ?Response.json({ok:true,channel:{id:'C123456',is_channel:true,[flag]:true}}):Response.json({ok:true,members:['U123456']}));
+    assert.equal(await slack.channelMember('C123456','U123456','U123456'),true);
+    assert.equal(await slack.channelMember('C123456','U123456','U123456',{shared:false}),false);
+  }
+});

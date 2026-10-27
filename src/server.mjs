@@ -7,7 +7,7 @@ import { applicationCall } from '@jc_stack/ez-agents/application-client';
 import { connection, slackConfig } from './config.mjs';
 import { Slack } from './slack.mjs';
 import { Receipts } from './storage.mjs';
-import { Channel, scopeFor, validThreadTs } from './channel.mjs';
+import { Channel, PostError, scopeFor, validThreadTs } from './channel.mjs';
 import { jsonBody, rpc } from './ipc.mjs';
 
 export async function serve(directory, { createSocket = options => new SocketModeClient(options) } = {}) {
@@ -79,9 +79,12 @@ export async function serve(directory, { createSocket = options => new SocketMod
           if (!identity || !bound || !/^[CG][A-Z0-9]{5,40}$/.test(args.channel ?? '') ||
             (args.threadTs !== undefined && !validThreadTs(args.threadTs)) || Object.keys(args).some(k => !['channel','threadTs'].includes(k))) throw Error('Supply a Slack channel ID and optional root thread timestamp');
           data = await applicationCall(`/v1/scope-control?scope=${encodeURIComponent(scopeFor(identity.teamId, args.channel, args.threadTs))}`, undefined, bound);
+        } else if (command === 'post') {
+          if (!channel) throw new PostError('Slack is not configured or connected');
+          data = await channel.post(args);
         } else throw Error('Unknown operation');
         respond(200, {ok: true, data});
-      } catch { respond(400, {ok: false, error: 'Slack operation unavailable; check configuration and bound identity'}); }
+      } catch (e) { respond(400, {ok: false, error: e instanceof PostError ? e.message : 'Slack operation unavailable; check configuration and bound identity'}); }
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
     await chmod(socketPath, 0o600);

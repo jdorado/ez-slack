@@ -11,11 +11,14 @@ import { appManifest } from './commands.mjs';
 export async function main() {
   const output = v => process.stdout.write(JSON.stringify(v) + '\n');
   try {
-    const { positionals, values } = parseArgs({ allowPositionals: true, options: { json: {type:'boolean'}, team: {type:'string'}, name: {type:'string'}, channel: {type:'string'}, thread: {type:'string'}, key: {type:'string'}, port: {type:'string'}, help: {type:'boolean'}, version: {type:'boolean'} } });
+    // parseArgs refuses an option value that starts with "-"; bind --text's value so Markdown bullets survive.
+    const argv = process.argv.slice(2), at = argv.indexOf('--text');
+    if (at >= 0 && argv[at + 1] !== undefined) argv.splice(at, 2, `--text=${argv[at + 1]}`);
+    const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: { json: {type:'boolean'}, team: {type:'string'}, name: {type:'string'}, channel: {type:'string'}, thread: {type:'string'}, key: {type:'string'}, text: {type:'string'}, port: {type:'string'}, help: {type:'boolean'}, version: {type:'boolean'} } });
     const [command] = positionals;
     if (positionals.length > 1) throw Error('Unexpected arguments');
     if (values.version) return output({version: JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version});
-    if (!command || values.help) return output({commands: ['health', 'doctor --json [--channel C…]', 'configure (private JSON stdin: url, token, privateHttp)', 'configure-slack (private JSON stdin: teamId, appId, botToken, appToken)', 'manifest --name NAME', 'setup --team T… --name NAME [--port 8788]', 'settings --channel C… [--thread ROOT_TS]', 'receipts [--key TEAM:EVENT]'], notes: 'Installed plugin only. Setup includes native controls by default: ez tools serve 18878:8788 slack setup --team T… --name NAME; open http://127.0.0.1:18878. Command name derives from NAME. Existing apps: update the generated manifest and reinstall for new permissions. Restart after configuration. Channel controls: !ez ai; !ez ai list; !ez ai CLI MODEL [EFFORT]; !ez ai effort EFFORT. Inbound attachments: one PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB; requires files:read. Replies of a schedule created in a channel or thread are posted there; nothing else posts unprompted. No arbitrary send or native execution command.'});
+    if (!command || values.help) return output({commands: ['health', 'doctor --json [--channel C…]', 'configure (private JSON stdin: url, token, privateHttp)', 'configure-slack (private JSON stdin: teamId, appId, botToken, appToken)', 'manifest --name NAME', 'setup --team T… --name NAME [--port 8788]', 'settings --channel C… [--thread ROOT_TS]', 'receipts [--key TEAM:EVENT]', 'post --channel C… --key KEY --text TEXT [--thread ROOT_TS]'], notes: 'post sends one message (3900 characters at most) into a channel this bot belongs to, once per key: reusing a key returns the first result and never resends; use a new key after an error. An owner\'s reply in the post\'s thread reaches the agent as a new thread conversation that quotes your message. Installed plugin only. Setup includes native controls by default: ez tools serve 18878:8788 slack setup --team T… --name NAME; open http://127.0.0.1:18878. Command name derives from NAME. Existing apps: update the generated manifest and reinstall for new permissions. Restart after configuration. Channel controls: !ez ai; !ez ai list; !ez ai CLI MODEL [EFFORT]; !ez ai effort EFFORT. Inbound attachments: one PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB; requires files:read. Replies of a schedule created in a channel or thread are posted there. No native execution command.'});
     if (command === 'manifest') return output(appManifest(values.name));
     const directory = resolve(process.env.EZ_SLACK_STATE ?? '/state');
     if (command === 'configure') { await saveConnection(directory, await jsonBody(process.stdin)); return output({configured:true, restartRequired:true}); }
@@ -32,8 +35,8 @@ export async function main() {
       for (const signal of ['SIGINT','SIGTERM']) process.on(signal, () => server.close(() => process.exit()));
       return;
     }
-    if (!['health','doctor','settings','receipts'].includes(command)) throw Error('Unknown command; use --help');
-    const data = await rpc(directory, command, {...(values.channel ? {channel:values.channel} : {}), ...(values.thread !== undefined ? {threadTs:values.thread} : {}), ...(values.key ? {key:values.key} : {})});
+    if (!['health','doctor','settings','receipts','post'].includes(command)) throw Error('Unknown command; use --help');
+    const data = await rpc(directory, command, {...(values.channel ? {channel:values.channel} : {}), ...(values.thread !== undefined ? {threadTs:values.thread} : {}), ...(values.key ? {key:values.key} : {}), ...(values.text !== undefined ? {text:values.text} : {})});
     output({ok:true, data});
     if (command === 'doctor' && (!data.connected || (data.channelAccess && data.channelAccess.botMember !== true))) process.exitCode = 2;
   } catch (e) { process.stderr.write(JSON.stringify({ok:false,error:e.code === 'ENOENT' || e.code === 'ECONNREFUSED' ? 'Slack service or configuration unavailable' : e.message}) + '\n'); process.exitCode = 1; }
