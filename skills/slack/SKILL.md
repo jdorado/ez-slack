@@ -36,10 +36,11 @@ members use this agent’s tool authority. Channel controls are `!ez help`,
 Use core’s returned catalog. The plugin has no model runner. To start a
 conversation from any run, `ez slack post --channel C_ID --key KEY --text TEXT
 [--thread ROOT_TS]` posts one message (3900 characters at most) into a channel the
-bot belongs to, once per key: reusing a key returns the first result and never
-resends, and an error needs a new key after the cause is fixed. A reply in that
-post’s thread reaches you as a new thread conversation whose first message quotes
-your post. A
+bot belongs to, once per key (use a fresh key for each post): reusing a key returns
+the first result and never resends, and an error needs a new key after the cause is
+fixed. Channels shared outside the workspace and `<!…>` special mentions are
+refused. A reply in the thread under a top-level post reaches you as a new thread
+conversation whose first message quotes your post. A
 schedule created during a turn in a channel or thread posts its replies in that
 channel (top level) or thread; a schedule created elsewhere never posts to Slack.
 `receipts` shows them as `run:RUN_ID`; `!ez stop` and `!ez status` ignore them.

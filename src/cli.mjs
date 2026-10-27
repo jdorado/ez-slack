@@ -11,7 +11,10 @@ import { appManifest } from './commands.mjs';
 export async function main() {
   const output = v => process.stdout.write(JSON.stringify(v) + '\n');
   try {
-    const { positionals, values } = parseArgs({ allowPositionals: true, options: { json: {type:'boolean'}, team: {type:'string'}, name: {type:'string'}, channel: {type:'string'}, thread: {type:'string'}, key: {type:'string'}, text: {type:'string'}, port: {type:'string'}, help: {type:'boolean'}, version: {type:'boolean'} } });
+    // parseArgs refuses an option value that starts with "-"; bind --text's value so Markdown bullets survive.
+    const argv = process.argv.slice(2), at = argv.indexOf('--text');
+    if (at >= 0 && argv[at + 1] !== undefined) argv.splice(at, 2, `--text=${argv[at + 1]}`);
+    const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: { json: {type:'boolean'}, team: {type:'string'}, name: {type:'string'}, channel: {type:'string'}, thread: {type:'string'}, key: {type:'string'}, text: {type:'string'}, port: {type:'string'}, help: {type:'boolean'}, version: {type:'boolean'} } });
     const [command] = positionals;
     if (positionals.length > 1) throw Error('Unexpected arguments');
     if (values.version) return output({version: JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version});

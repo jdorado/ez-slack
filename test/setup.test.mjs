@@ -340,5 +340,15 @@ test('the service and CLI post once per key into a member channel and explain re
   assert.equal(ok.code,0,ok.stderr);assert.deepEqual(JSON.parse(ok.stdout).data,{channel:'C123456',ts:'1234567.999999',threadTs:'1234567.111111',state:'accepted'});
   const refused=await cli('post','--channel','C123456','--key','q1','--text','Other');
   assert.equal(refused.code,1);assert.match(refused.stderr,/different post/);
-  assert.deepEqual(posts.map(p=>[p.channel,p.text,p.thread_ts]),[['C123456','Hello owners',undefined],['C123456','Via CLI','1234567.111111']]);
+  const bullet=await cli('post','--channel','C123456','--key','q3','--text','- a bullet\n- another');
+  assert.equal(bullet.code,0,bullet.stderr);
+  assert.deepEqual(posts.map(p=>[p.channel,p.text,p.thread_ts]),[['C123456','Hello owners',undefined],['C123456','Via CLI','1234567.111111'],['C123456','- a bullet\n- another',undefined]]);
+});
+test('channelMember can refuse channels shared outside the workspace',async()=>{
+  for (const flag of ['is_shared','is_ext_shared','is_org_shared','is_pending_ext_shared']) {
+    const slack=new Slack('synthetic',async url=>new URL(url).pathname==='/api/conversations.info'
+      ?Response.json({ok:true,channel:{id:'C123456',is_channel:true,[flag]:true}}):Response.json({ok:true,members:['U123456']}));
+    assert.equal(await slack.channelMember('C123456','U123456','U123456'),true);
+    assert.equal(await slack.channelMember('C123456','U123456','U123456',{shared:false}),false);
+  }
 });

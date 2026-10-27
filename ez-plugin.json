@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "slack",
   "version": "0.1.0-beta.4.rc.2",
-  "description": "Slack channel transport with native Ez conversation continuity",
-  "example": "slack post --channel C0123456789 --key question-1 --text \"Question: …\"",
+  "description": "Slack channel transport with native Ez conversation continuity; post a message to a channel the bot belongs to",
+  "example": "slack settings --channel C0123456789",
   "commands": {
     "slack": {
       "executable": "bin/ez-slack.mjs",

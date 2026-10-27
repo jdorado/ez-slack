@@ -222,22 +222,31 @@ ez slack post --channel C_CHANNEL_ID --key QUESTION_KEY --text "Question for Mil
 
 Any run can post one message (3900 characters at most) into a channel the bot is
 a member of, at the top level or inside a thread. The bot's membership is checked
-first; DMs, other workspaces and channel-wide mentions (`<!channel>`, `<!here>`,
-`<!everyone>`) are refused. The output is `{channel, ts, state}`.
+first; DMs, channels shared outside the workspace and Slack special mentions
+(`<!…>`: channel, here, everyone, user groups) are refused, while user mentions
+(`<@U…>`) are allowed. The output is `{channel, ts, state}`.
 
-The key makes a post once-only: reusing it with the same content returns the first
-result (`duplicate: true`) and never resends. The same key with different content
-is refused, and an unconfirmed or rejected send is never replayed under its key;
-inspect `ez slack receipts --key post:KEY` and use a new key after fixing the
-cause. Receipts (`post:KEY`) hold a hash of the content, never the text.
+The key makes a post once-only while its receipt is retained (the newest 1000
+receipts), so use a fresh key for each post: reusing one with the same content
+returns the first result (`duplicate: true`) and never resends, even for calls that
+run at the same moment. The same key with different content is refused, and an
+unconfirmed or rejected send is never replayed under its key; inspect
+`ez slack receipts --key post:KEY` and use a new key after fixing the cause.
+Receipts (`post:KEY`) hold a hash of the content, never the text. A rejected post
+closes its receipt; an unconfirmed one closes after 24 hours, and while 50 are
+unresolved new posts are refused, so a failing loop cannot fill receipt capacity.
 
-A human reply in the thread under a post reaches the agent like any thread
-message: its own native session, delivered back into that thread. Because that
-session starts without history, its first message is admitted with the bot's
+A human reply in the thread under a top-level post reaches the agent like any
+thread message: its own native session, delivered back into that thread. Because
+that session starts without history, its first message is admitted with the bot's
 root message quoted above the reply (`Replying to your Slack message:` and the
-quoted lines); later messages in the thread are not quoted again. If Slack does
-not return the root, the plain reply is admitted. The quote needs the history
-scopes already in the generated manifest.
+quoted lines); later messages in the thread are not quoted again. If Slack does not
+return the root, the plain reply is admitted. The lookup is marked
+`quote_pending` in the receipt while it runs, like an attachment download. The
+quote needs the history scopes already in the generated manifest. Only a top-level
+post starts a new thread session: a post made with `--thread` into a thread that
+already has a conversation is not quoted, and a thread with several bot messages
+quotes only its root.
 
 ## State, recovery and limits
 

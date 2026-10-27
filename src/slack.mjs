@@ -74,10 +74,12 @@ export class Slack {
     if (!(pdf || png || jpeg || webp || text)) throw Error('Unsupported Slack attachment type');
     return {name:file.name,data:bytes.toString('base64')};
   }
-  async channelMember(channel, user, bot) {
+  // `shared: false` also refuses a channel shared with another workspace or organization.
+  async channelMember(channel, user, bot, { shared = true } = {}) {
     if (![user,bot].every(id => /^[UW][A-Z0-9]{5,40}$/.test(id ?? ''))) throw Error('Invalid Slack member identity');
     const info = await this.call('conversations.info', {channel});
-    if (info.channel?.id !== channel || !(info.channel.is_channel === true || info.channel.is_group === true) || info.channel.is_archived || info.channel.is_im || info.channel.is_mpim) return false;
+    if (info.channel?.id !== channel || !(info.channel.is_channel === true || info.channel.is_group === true) || info.channel.is_archived || info.channel.is_im || info.channel.is_mpim ||
+      (!shared && [info.channel.is_shared, info.channel.is_ext_shared, info.channel.is_org_shared, info.channel.is_pending_ext_shared].some(Boolean))) return false;
     const missing = new Set([user,bot]);
     let cursor;
     do {
