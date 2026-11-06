@@ -219,6 +219,17 @@ test('attachment accepts JPEG, PNG, WebP and UTF-8 text by content, with exact b
   ];
   for(const [name,bytes] of cases)assert.deepEqual(await slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
 });
+test('attachment accepts the text and Markdown files Slack stores as snippets, and refuses posts, canvases and external files',async()=>{
+  // Real Slack shape for an uploaded .md: mode "snippet", mimetype "text/plain", not external.
+  for(const name of ['reply-to-v3.md','notes.txt','notes.markdown']){
+    const bytes=Buffer.from('# Markdown\n');
+    const file=slackFile(name,bytes.length,{mode:'snippet',filetype:'markdown',mimetype:'text/plain',is_external:false,editable:true});
+    assert.deepEqual(await slackWith(file,bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
+  }
+  const code=Buffer.from('{"a":1}');
+  await assert.rejects(slackWith(slackFile('data.json',code.length,{mode:'snippet'}),code).attachment('F123456'),/Unsupported Slack attachment type/);
+  for(const mode of ['post','space','external',undefined])await assert.rejects(slackWith(slackFile('notes.md',3,{mode}),'abc').attachment('F123456'),/Unsupported Slack attachment$/,String(mode));
+});
 test('attachment rejects text with NUL bytes, invalid UTF-8, or content that does not match an allowed type',async()=>{
   for(const [name,bytes] of [['nul.txt',Buffer.from('ok\0text')],['bad.md',Buffer.from([0x61,0xc3,0x28,0x62])],['fake.png',Buffer.from('not a png')],['data.bin',Buffer.from('plain but wrong extension')]]){
     await assert.rejects(slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),e=>{assert.match(e.message,/Unsupported/);assert.notEqual(e.transient,true);return true;},name);
