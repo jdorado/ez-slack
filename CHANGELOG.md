@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.1.0-beta.4
+## 0.1.0-beta.5
 
+- Carries every change that was built as `0.1.0-beta.4.rc.N`. Version `0.1.0-beta.4` itself was never released: SemVer sorts each `beta.4.rc.N` above `beta.4`, so a `beta.4` release would count as a downgrade for an installation running one of those builds.
 - Accept the text and Markdown attachments Slack stores in `snippet` mode. Slack reports an uploaded `.txt`/`.md` file as `mode: "snippet"`, so every such file was rejected as "Attachment could not be read" even with `files:read` granted. Posts, canvases and external files are still refused, and the name and content checks still decide the type.
 - Add `ez slack post --channel C… --key KEY --text TEXT [--thread ROOT_TS]`: any run can post one message (3900 characters at most) into a channel the bot belongs to. It is once-only per key while its receipt is retained (reuse returns the first result, concurrent calls share one send, an uncertain or rejected send is never replayed), refuses channels shared outside the workspace and Slack special mentions (`<!…>`), and records only a hash in `post:KEY` receipts; a rejected post closes its row, unconfirmed ones age out after 24 hours and are capped at 50 so a failing loop cannot fill receipt capacity. `--text` accepts values that start with `-`. The first reply in a thread under the bot's own message is admitted with that message quoted, so the agent knows what is being answered; this reads the root through `conversations.replies` with the existing history scopes. The first-reply lookup is marked `quote_pending` while it runs. The manifest description now mentions posting; its example stays a read.
 
