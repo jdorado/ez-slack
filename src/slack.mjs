@@ -39,7 +39,9 @@ export class Slack {
     if (!/^F[A-Z0-9]{5,40}$/.test(id ?? '')) throw Error('Invalid Slack file identity');
     const {file} = await this.call('files.info', {file:id});
     const limit = 10 * 1024 * 1024;
-    if (file?.id !== id || file.mode !== 'hosted' || file.is_external ||
+    // Slack stores uploaded text and Markdown files as `snippet` and everything else as `hosted`; both are Slack-held bytes.
+    // External links, posts and canvases are never downloaded. The name and content checks below still decide the type.
+    if (file?.id !== id || !['hosted', 'snippet'].includes(file.mode) || file.is_external ||
         typeof file.name !== 'string' || !file.name.length || file.name.length > 255 ||
         !Number.isSafeInteger(file.size) || file.size <= 0 || file.size > limit) throw Error('Unsupported Slack attachment');
     const url = new URL(file.url_private_download ?? file.url_private);
