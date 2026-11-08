@@ -118,7 +118,7 @@ export class Channel {
             });
             await this.deliver(receipt, 'attachment-rejected', transient
               ? 'Attachment could not be fetched right now (temporary Slack problem). Please resend it in a moment.'
-              : 'Attachment could not be read. Use a PDF, JPEG/PNG/WebP image, or text/Markdown file up to 10 MiB. The Slack app also needs files:read permission.');
+              : 'Attachment could not be read. Send a file up to 10 MiB that Slack hosts (not a post, canvas or external link). If every attachment fails, the Slack app may be missing the files:read permission.');
             return { rejected: true };
           }
           await this.receipts.change(input.key, r => { delete r.issue; r.uncertain = false; });
@@ -126,6 +126,12 @@ export class Channel {
         let run;
         try { run = await this.core('/v1/runs', { requestId: input.requestId, scope: input.scope, text: await this.quoted(input), ...(attachment ? {attachment} : {}) }); }
         catch (e) {
+          // Core refuses programs, scripts and oversized files before admission (HTTP 400); say so instead of leaving the message unanswered.
+          if (attachment && e.status === 400 && e.admitted !== true) {
+            await this.receipts.change(input.key, r => { r.issue = 'attachment_rejected'; r.uncertain = false; r.closed = true; });
+            await this.deliver(receipt, 'attachment-rejected', 'This file was not accepted: programs and scripts (exe, sh, bat, jar, ...) and files over 10 MiB are refused. Any other format is fine.');
+            return { rejected: true };
+          }
           await this.receipts.change(input.key, r => { r.uncertain = e.admitted !== false; if (e.runId) r.runId = e.runId; r.issue = 'admission_unconfirmed'; });
           throw e;
         }

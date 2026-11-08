@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.6
+
+- Accept a file of any format, not only PDF, JPEG/PNG/WebP and `.txt`/`.md`. The plugin only downloads the Slack-hosted file (10 MiB at most, Slack URL pinned, size verified) and passes the bytes to Ez core, which stores them for the agent to open and refuses programs and scripts. An `.html` or `.docx` upload no longer fails with "Attachment could not be read". Requires an Ez core with that change (the PR "Accept any chat attachment except programs and scripts"); on older cores core still refuses unknown types.
+- When core refuses a file (HTTP 400: program, script or over 10 MiB) the sender now gets a clear reply and the receipt closes as `attachment_rejected`, instead of an unanswered message with an unconfirmed admission. The unreadable-file reply no longer says only that the Slack app needs `files:read`.
+
 ## 0.1.0-beta.5
 
 - Carries every change that was built as `0.1.0-beta.4.rc.N`. Version `0.1.0-beta.4` itself was never released: SemVer sorts each `beta.4.rc.N` above `beta.4`, so a `beta.4` release would count as a downgrade for an installation running one of those builds.
