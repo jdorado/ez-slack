@@ -298,6 +298,12 @@ test('file-only and captioned messages use one core attachment admission and ret
   assert.equal(f.calls.filter(c=>c.path==='/v1/runs').at(-1).body.text,'Read this');
   await assert.rejects(f.agent.receive({...caption,event:{...caption.event,files:[{id:'F654321'}]}}),/event ID reused/);
 });
+test('a file Ez core refuses gets an explicit reply and a closed receipt, not a silent unconfirmed admission', async t => {
+  const f=await fixture(t,{call:async()=>{throw Object.assign(Error('Ez application returned HTTP 400'),{status:400,admitted:false});}});
+  f.agent.slack.attachment=async()=>({name:'run.exe',data:Buffer.from('MZ').toString('base64')});
+  const p=event(84,'');p.event.files=[{id:'F123456'}];await f.agent.receive(p);
+  assert.match(f.sends[0].text,/not accepted/);const r=(await f.receipts.load()).at(-1);assert.equal(r.issue,'attachment_rejected');assert.equal(r.closed,true);assert.equal(r.uncertain,false);
+});
 test('multiple files and unavailable attachments get explicit replies without native admission', async t => {
   const f=await fixture(t);let downloads=0;
   f.agent.slack.attachment=async()=>{downloads++;throw Object.assign(Error('missing scope'),{providerCode:'missing_scope'});};
@@ -337,7 +343,7 @@ test('transient attachment failures ask for a resend and are not recorded as rej
   assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
   f.agent.slack.attachment=async()=>{throw Error('Unsupported Slack attachment type');};
   const q=event(95,'');q.event.files=[{id:'F123456'}];await f.agent.receive(q);
-  assert.match(f.sends.at(-1).text,/PDF, JPEG/);assert.equal((await f.receipts.load()).at(-1).issue,'attachment_rejected');
+  assert.match(f.sends.at(-1).text,/10 MiB/);assert.equal((await f.receipts.load()).at(-1).issue,'attachment_rejected');
 });
 test('a caption starting with !ez on a file is a prompt, not a control',async t=>{
   const f=await fixture(t);

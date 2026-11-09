@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "slack",
-  "version": "0.1.0-beta.5",
+  "version": "0.1.0-beta.6",
   "description": "Slack channel transport with native Ez conversation continuity; post a message to a channel the bot belongs to",
   "example": "slack settings --channel C0123456789",
   "commands": {

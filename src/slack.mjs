@@ -40,7 +40,7 @@ export class Slack {
     const {file} = await this.call('files.info', {file:id});
     const limit = 10 * 1024 * 1024;
     // Slack stores uploaded text and Markdown files as `snippet` and everything else as `hosted`; both are Slack-held bytes.
-    // External links, posts and canvases are never downloaded. The name and content checks below still decide the type.
+    // External links, posts and canvases are never downloaded. Ez core decides what the bytes may be.
     if (file?.id !== id || !['hosted', 'snippet'].includes(file.mode) || file.is_external ||
         typeof file.name !== 'string' || !file.name.length || file.name.length > 255 ||
         !Number.isSafeInteger(file.size) || file.size <= 0 || file.size > limit) throw Error('Unsupported Slack attachment');
@@ -65,15 +65,7 @@ export class Slack {
       }
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     if (size !== file.size) throw Error('Slack attachment size mismatch');
-    const pdf = bytes.subarray(0,5).toString() === '%PDF-';
-    const png = bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
-    const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
-    const webp = bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP';
-    let text = false;
-    if (/\.(txt|md|markdown)$/i.test(file.name) && !bytes.includes(0)) {
-      try { new TextDecoder('utf-8', {fatal:true}).decode(bytes); text = true; } catch {}
-    }
-    if (!(pdf || png || jpeg || webp || text)) throw Error('Unsupported Slack attachment type');
+    // The file type is not decided here: Ez core stores any file for the agent and refuses programs and scripts.
     return {name:file.name,data:bytes.toString('base64')};
   }
   // `shared: false` also refuses a channel shared with another workspace or organization.

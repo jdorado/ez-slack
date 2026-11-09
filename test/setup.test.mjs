@@ -164,7 +164,6 @@ test('private attachment download authenticates only Slack hosted URLs and bound
   for(const alter of [{id:'F654321'},{size:10*1024*1024+1},{mode:'external'},{url_private:'https://evil.invalid/files-pri/x'},{url_private:'https://files.slack.com@evil.invalid/files-pri/x'},{url_private:'http://files.slack.com/files-pri/x'}]) {
     const before=calls;await assert.rejects(make(alter).attachment(file.id));assert.equal(calls,before+1);
   }
-  await assert.rejects(make({},Buffer.from('not a PDF')).attachment(file.id));
   await assert.rejects(make({size:1}).attachment(file.id),/size mismatch/);
   await assert.rejects(make({},Buffer.alloc(10*1024*1024+1)).attachment(file.id),/Oversized/);
 });
@@ -219,21 +218,16 @@ test('attachment accepts JPEG, PNG, WebP and UTF-8 text by content, with exact b
   ];
   for(const [name,bytes] of cases)assert.deepEqual(await slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
 });
-test('attachment accepts the text and Markdown files Slack stores as snippets, and refuses posts, canvases and external files',async()=>{
-  // Real Slack shape for an uploaded .md: mode "snippet", mimetype "text/plain", not external.
-  for(const name of ['reply-to-v3.md','notes.txt','notes.markdown']){
-    const bytes=Buffer.from('# Markdown\n');
-    const file=slackFile(name,bytes.length,{mode:'snippet',filetype:'markdown',mimetype:'text/plain',is_external:false,editable:true});
-    assert.deepEqual(await slackWith(file,bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
-  }
-  const code=Buffer.from('{"a":1}');
-  await assert.rejects(slackWith(slackFile('data.json',code.length,{mode:'snippet'}),code).attachment('F123456'),/Unsupported Slack attachment type/);
+test('attachment accepts any format and preserves the exact bytes; core decides what is refused',async()=>{
+  const cases=[
+    ['photo.jpg',Buffer.from([255,216,255,224,0,16])],['notes.md',Buffer.from('# Markdown\n')],
+    ['page.html',Buffer.from('<html><body>hi</body></html>')],['report.docx',Buffer.from([0x50,0x4b,3,4,0,0])],['data.bin',Buffer.from([0,1,2,3])],
+  ];
+  for(const [name,bytes] of cases)assert.deepEqual(await slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),{name,data:bytes.toString('base64')},name);
+  // Slack stores uploaded text as `snippet`; posts, canvases and external links are never downloaded.
+  const md=Buffer.from('# Markdown\n');
+  assert.deepEqual(await slackWith(slackFile('a.md',md.length,{mode:'snippet',filetype:'markdown',mimetype:'text/plain',is_external:false}),md).attachment('F123456'),{name:'a.md',data:md.toString('base64')});
   for(const mode of ['post','space','external',undefined])await assert.rejects(slackWith(slackFile('notes.md',3,{mode}),'abc').attachment('F123456'),/Unsupported Slack attachment$/,String(mode));
-});
-test('attachment rejects text with NUL bytes, invalid UTF-8, or content that does not match an allowed type',async()=>{
-  for(const [name,bytes] of [['nul.txt',Buffer.from('ok\0text')],['bad.md',Buffer.from([0x61,0xc3,0x28,0x62])],['fake.png',Buffer.from('not a png')],['data.bin',Buffer.from('plain but wrong extension')]]){
-    await assert.rejects(slackWith(slackFile(name,bytes.length),bytes).attachment('F123456'),e=>{assert.match(e.message,/Unsupported/);assert.notEqual(e.transient,true);return true;},name);
-  }
 });
 test('attachment stream aborts as soon as the byte limit is exceeded and cancels the body',async()=>{
   let pulled=0,cancelled=false;
