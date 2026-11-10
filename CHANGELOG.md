@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.8
+
+- Remove the eight `pnpm audit --prod` advisories (4 high, 4 moderate) in `undici` below 7.30.1. `undici` is only a peer of the pinned `@slack/socket-mode` 3.0.1, so the lockfile had kept 7.30.0; `pnpm-workspace.yaml` now pins `undici` 7.30.1 and nothing else in the lockfile changes (`@slack/socket-mode` 3.1.1 would also clear them, but only by pulling `undici` 8).
+- `SECURITY.md` no longer says every message subtype is ignored: a file upload and a thread reply sent with "Also send to #channel" are admitted.
+
 ## 0.1.0-beta.7
 
 - Admit a thread reply sent with "Also send to #channel". Slack delivers it as a `thread_broadcast` message, which was ignored without a trace, so the agent in that thread never saw the person's answer. It now enters its thread scope like any other reply; bot messages and every other subtype are still ignored.
