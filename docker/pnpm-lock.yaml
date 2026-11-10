@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  undici: 7.30.1
+
 importers:
 
   .:
@@ -13,7 +16,7 @@ importers:
         version: 0.1.0-beta.42
       '@slack/socket-mode':
         specifier: 3.0.1
-        version: 3.0.1(undici@7.30.0)
+        version: 3.0.1(undici@7.30.1)
 
 packages:
 
@@ -189,7 +192,7 @@ packages:
     resolution: {integrity: sha512-7L4adgnJtQvQgo5cfIwqHG1QuR8mdZQ/WdMScNDp6uK644ZqnHDAa4rR+vZYfZFdJ5+obCqZQ66Dad8kcwJ4Jg==}
     engines: {node: '>=20', npm: '>=9.6.4'}
     peerDependencies:
-      undici: ^7.0.0
+      undici: 7.30.1
 
   '@slack/types@3.1.0':
     resolution: {integrity: sha512-bTzqrO3lxJ5iWedo1eJKNAs1koyEhaTwKLJUkD3KETnPeQvD978AAE4jvWstUws8Gbbc4JR6iYE6F7XjE8UGmw==}
@@ -288,8 +291,8 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.30.0:
-    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   webidl-conversions@3.0.1:
@@ -392,13 +395,13 @@ snapshots:
     dependencies:
       '@types/node': 26.6.3
 
-  '@slack/socket-mode@3.0.1(undici@7.30.0)':
+  '@slack/socket-mode@3.0.1(undici@7.30.1)':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/web-api': 8.1.1
       '@types/node': 26.6.3
       eventemitter3: 5.0.4
-      undici: 7.30.0
+      undici: 7.30.1
 
   '@slack/types@3.1.0': {}
 
@@ -511,7 +514,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.30.0: {}
+  undici@7.30.1: {}
 
   webidl-conversions@3.0.1: {}
 
