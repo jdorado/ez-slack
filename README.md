@@ -119,7 +119,8 @@ ez slack doctor --json
 Invite the bot to an explicitly intended channel and send a human text message.
 The bot processes human messages from public/private channels to which it is
 invited. All human members there act with this agent’s owner authority: use
-dedicated trusted channels. Bot messages, edits, message subtypes, DMs and other
+dedicated trusted channels. Bot messages, edits, other message subtypes (a file
+upload and a thread reply sent with “Also send to #channel” are admitted), DMs and other
 workspaces/apps are ignored. Ordinary channel messages continue the channel’s
 conversation. A thread uses its parent message’s `thread_ts` as its separate
 scope: replies in that thread continue the same native session and are delivered
