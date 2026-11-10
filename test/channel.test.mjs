@@ -81,6 +81,7 @@ test('only human channel messages from the pinned workspace/app enter a scope', 
   const broadcast=event(5,'Answer','C123456','123.456');broadcast.event.subtype='thread_broadcast';
   assert.equal(incoming(broadcast,identity).scope,scopeFor('T123456','C123456','123.456'));
   broadcast.event.bot_id='B123456';assert.equal(incoming(broadcast,identity),null);
+  const orphan=event(6,'Answer');orphan.event.subtype='thread_broadcast';assert.equal(incoming(orphan,identity),null);
   assert.notEqual(incoming(thread,identity).scope,incoming(event(),identity).scope);
   for(const threadTs of [null,123,'','../bad','123',`${'1'.repeat(21)}.123`]) assert.equal(incoming(event(1,'Hello','C123456',threadTs),identity),null);
 });

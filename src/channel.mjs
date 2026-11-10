@@ -27,7 +27,7 @@ export function incoming(payload, identity) {
       !/^[UW][A-Z0-9]{5,40}$/.test(e.user ?? '') || e.user === identity.botUserId ||
       !/^[CG][A-Z0-9]{5,40}$/.test(e.channel ?? '') || !['channel', 'group'].includes(e.channel_type) ||
       typeof e.text !== 'string' || (!e.text.trim() && !e.files?.length) || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '') ||
-      (e.thread_ts !== undefined && !validThreadTs(e.thread_ts))) return null;
+      (e.thread_ts !== undefined && !validThreadTs(e.thread_ts)) || (e.subtype === 'thread_broadcast' && e.thread_ts === undefined)) return null;
   if (e.files !== undefined && (!Array.isArray(e.files) || !e.files.length || e.files.length > 20 || e.files.some(f => !/^F[A-Z0-9]{5,40}$/.test(f?.id ?? '')))) return null;
   const files = e.files?.map(f => f.id);
   return { key: `${payload.team_id}:${payload.event_id}`, requestId: `${payload.team_id}:${payload.event_id}`, channel: e.channel,
