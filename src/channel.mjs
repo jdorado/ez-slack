@@ -18,10 +18,12 @@ export function scopeParts(scope, team) {
   if (kind === undefined) return { channel };
   return kind === 'thread' && validThreadTs(threadTs) ? { channel, threadTs } : null;
 }
+// A reply sent with "Also send to #channel" arrives as `thread_broadcast`: still a person's reply in that thread.
+const admittedSubtypes = new Set(['file_share', 'thread_broadcast']);
 export function incoming(payload, identity) {
   const e = payload?.event;
   if (payload?.type !== 'event_callback' || payload.team_id !== identity.teamId || payload.api_app_id !== identity.appId ||
-      !/^Ev[A-Za-z0-9]{5,80}$/.test(payload.event_id ?? '') || e?.type !== 'message' || (e.subtype && e.subtype !== 'file_share') || e.bot_id ||
+      !/^Ev[A-Za-z0-9]{5,80}$/.test(payload.event_id ?? '') || e?.type !== 'message' || (e.subtype && !admittedSubtypes.has(e.subtype)) || e.bot_id ||
       !/^[UW][A-Z0-9]{5,40}$/.test(e.user ?? '') || e.user === identity.botUserId ||
       !/^[CG][A-Z0-9]{5,40}$/.test(e.channel ?? '') || !['channel', 'group'].includes(e.channel_type) ||
       typeof e.text !== 'string' || (!e.text.trim() && !e.files?.length) || e.text.length > 16000 || !/^\d+\.\d+$/.test(e.ts ?? '') ||
