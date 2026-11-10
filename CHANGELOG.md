@@ -2,7 +2,7 @@
 
 ## 0.1.0-beta.8
 
-- Remove the eight `pnpm audit --prod` advisories (4 high, 4 moderate) in `undici` below 7.30.1. `undici` is only a peer of the pinned `@slack/socket-mode` 3.0.1, so the lockfile had kept 7.30.0; `pnpm-workspace.yaml` now pins `undici` 7.30.1 and nothing else in the lockfile changes (`@slack/socket-mode` 3.1.1 would also clear them, but only by pulling `undici` 8).
+- Remove the eight `pnpm audit --prod` advisories (4 high, 4 moderate) in `undici` below 7.30.1. `undici` is only a peer of the pinned `@slack/socket-mode` 3.0.1, so the lockfile had kept 7.30.0; `pnpm-workspace.yaml` now pins `undici` 7.30.1, and the lockfile changes only by that override and the `undici` entry. A newer `@slack/socket-mode` (3.1.1) was the larger change: it also moves `@slack/web-api` and, on a fresh resolve, installs `undici` 8.
 - `SECURITY.md` no longer says every message subtype is ignored: a file upload and a thread reply sent with "Also send to #channel" are admitted.
 
 ## 0.1.0-beta.7

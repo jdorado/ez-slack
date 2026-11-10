@@ -14,8 +14,8 @@ third-party assets. Do not publicly proxy the setup service.
 An invited trusted channel grants all its human participants this agent’s owner
 tool authority. v1 is not an ACL/tenant sandbox. Independent agents have separate
 installations and Slack apps. Core checks the application binding on every call.
-Provider workspace/app/bot identity is pinned; bot messages and message subtypes are ignored,
-except a file upload and a thread reply sent with “Also send to #channel”.
+Provider workspace/app/bot identity is pinned; bot messages and message subtypes are
+ignored, except a file upload and a thread reply sent with “Also send to #channel”.
 No provider content can change authentication, network attachment or core owner.
 
 Uncertain sends remain unresolved and are never automatically resent. Private
