@@ -97,7 +97,7 @@ export class Channel {
         // Control mutations are deliberate, once-only UI operations; never replay after uncertainty.
         let text;
         try { text = await this.control(input); }
-        catch { await this.receipts.change(input.key, r => { r.issue = 'control_unconfirmed'; }); text = 'Control was not confirmed. Use !ez ai to read the current settings before trying another change.'; }
+        catch { await this.receipts.change(input.key, r => { r.issue = 'control_unconfirmed'; }); text = 'Control was not confirmed. Use !ez status to read the current state before trying again.'; }
         if (input.nativeControl) text = text.replaceAll('!ez', input.nativeControl);
         await this.deliver(receipt, 'control', text);
         await this.receipts.change(input.key, r => { r.closed = true; });
@@ -155,7 +155,6 @@ export class Channel {
     if (!spec || !spec.counts.includes(args.length)) return 'Unknown control. Use !ez help.';
     if (command === 'help') return controlHelp();
     if (command === 'stop') {
-      if (args.length) throw Error('Use !ez stop');
       // Scheduled runs are background work; stopping a conversation never cancels them.
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed && !r.scheduled);
       for (const r of rows) await this.core(`/v1/runs/${r.runId}/cancel`, {});
@@ -180,35 +179,9 @@ export class Channel {
         `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
         `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue || unresolvedSend(r)).length} receipts need attention`].join('\n');
     }
-    if (command === 'ai' && !args.length) {
-      return `This ${place}: ${presetText(selectedPreset(controls))}. Use !ez ai list for choices.`;
-    }
-    if (command === 'ai' && args.length === 1 && args[0] === 'list') {
-      return ['Available AIs:', ...(controls.models ?? []).map(m =>
-        `${m.cli}${m.authProfile ? `@${m.authProfile}` : ''} ${m.model ?? '(client default)'}${m.provider ? ` (${m.provider})` : ''}${m.efforts.length ? ` — effort: ${m.efforts.join(', ')}` : ''}`),
-        'Set: !ez ai CLI MODEL [EFFORT]. Change effort: !ez ai effort EFFORT.'].join('\n');
-    }
-    let action;
-    if (command === 'new' && !args.length) action = { action: 'new' };
-    else if (command === 'select' && args.length === 1) action = { action: 'select', presetId: args[0] };
-    else if (command === 'ai' && args.length === 2 && args[0] === 'effort') {
-      const selected = selectedPreset(controls);
-      const model = (controls.models ?? []).find(m => m.cli === selected?.cli && m.authProfile === selected?.authProfile && m.provider === selected?.provider && m.model === selected?.model);
-      if (!model || !model.efforts.includes(args[1])) return 'Choose an effort supported by the current model from !ez ai list.';
-      action = { action: 'model', cli: model.cli, ...(model.authProfile ? {authProfile: model.authProfile} : {}), provider: model.provider, model: model.model, effort: args[1] };
-    } else if ((command === 'ai' || command === 'model') && [2, 3].includes(args.length)) {
-      const [cli, authProfile, extra] = args[0].split('@');
-      const candidates = (controls.models ?? []).filter(m => m.cli === cli && m.authProfile === authProfile && m.model === args[1]);
-      if (extra !== undefined || authProfile === '') return 'Use CLI@PROFILE from !ez ai list.';
-      if (!candidates.length) return `Model ${args[1]} is not advertised for ${args[0]}. Use !ez ai list; current selection unchanged.`;
-      if (candidates.length !== 1) return `Model ${args[1]} is ambiguous across providers for ${args[0]}. Use !ez ai list; current selection unchanged.`;
-      const m = candidates[0];
-      if (args[2] && !m.efforts.includes(args[2])) return `Effort ${args[2]} is not supported for ${args[0]} ${args[1]}. Supported efforts: ${m.efforts.join(', ') || 'none (omit effort)'}. Use !ez ai list; current selection unchanged.`;
-      action = { action: 'model', cli: m.cli, ...(m.authProfile ? {authProfile: m.authProfile} : {}), provider: m.provider, model: m.model, ...(args[2] ? { effort: args[2] } : {}) };
-    } else return 'Use !ez ai, !ez ai list, !ez ai CLI MODEL [EFFORT], or !ez ai effort EFFORT.';
-    await this.core(path, { ...action, expectedSession: controls.activeSessionId });
+    await this.core(path, { action: 'new', expectedSession: controls.activeSessionId });
     const readback = await this.core(path);
-    return `This ${place}: ${presetText(selectedPreset(readback))}.`;
+    return `New conversation in this ${place}: ${presetText(selectedPreset(readback))}.`;
   }
   // A thread session starts without history. When the first message of one answers this bot's own message, quote that
   // message so the agent knows what is being answered. Any failure admits the plain text.
