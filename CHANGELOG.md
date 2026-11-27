@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-beta.9
+
+- Remove the channel AI controls `!ez ai`, `!ez ai list`, `!ez ai CLI MODEL [EFFORT]`, `!ez ai effort EFFORT`, `!ez model` and `!ez select` (and their slash forms). To change the AI of a channel or thread, ask the agent there: with core 0.81.0 it switches its own AI for that conversation from the next message. Controls are now `help`, `status`, `new` and `stop`; `status` still shows the channel's AI.
+
 ## 0.1.0-beta.8
 
 - Remove the eight `pnpm audit --prod` advisories (4 high, 4 moderate) in `undici` below 7.30.1. `undici` is only a peer of the pinned `@slack/socket-mode` 3.0.1, so the lockfile had kept 7.30.0; `pnpm-workspace.yaml` now pins `undici` 7.30.1, and the lockfile changes only by that override and the `undici` entry. A newer `@slack/socket-mode` (3.1.1) was the larger change: it also moves `@slack/web-api` and, on a fresh resolve, installs `undici` 8.
