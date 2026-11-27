@@ -52,16 +52,16 @@ test('native slash controls acknowledge durable input before membership checks, 
   let acknowledged=false, checks=0;
   const f=await fixture(t,{member:async(channel,user)=>{checks++;assert(acknowledged);assert.equal(channel,'C123456');assert.equal(user,'U123456');return true;}});
   const ack=async response=>{assert.equal((await f.receipts.load()).length,1);assert.equal(response.response_type,'ephemeral');acknowledged=true;};
-  await f.agent.receiveSlash(slash(1,'model codex model-b medium'),ack);
-  await f.agent.receiveSlash(slash(1,'model codex model-b medium'),ack);
+  await f.agent.receiveSlash(slash(1,'new'),ack);
+  await f.agent.receiveSlash(slash(1,'new'),ack);
   assert.equal(checks,1);assert.equal(f.calls.filter(c=>c.body?.action).length,1);
   assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,0);
-  assert.match(f.sends[0].text,/model-b \/ medium/);
-  await f.agent.receiveSlash(slash(2));assert.match(f.sends.at(-1).text,/\/ez ai list/);
+  assert.match(f.sends[0].text,/New conversation in this channel: codex \/ model-a \/ low/);
+  await f.agent.receiveSlash(slash(2));assert.match(f.sends.at(-1).text,/\/ez status[\s\S]*\/ez new[\s\S]*\/ez stop/);
   await f.agent.receiveSlash(slash(3,'unknown'));assert.match(f.sends.at(-1).text,/\/ez help/);
-  await f.agent.receiveSlash({...slash(4),command:'/ez-annie'});assert.match(f.sends.at(-1).text,/\/ez-annie ai list/);
+  await f.agent.receiveSlash({...slash(4),command:'/ez-annie'});assert.match(f.sends.at(-1).text,/\/ez-annie status[\s\S]*\/ez-annie new[\s\S]*\/ez-annie stop/);
   assert.equal(f.runs.size,0);
-  await assert.rejects(f.agent.receiveSlash({...slash(1,'new')}),/Slack event ID reused/);
+  await assert.rejects(f.agent.receiveSlash({...slash(1,'status')}),/Slack event ID reused/);
 });
 test('native slash commands cannot read controls or send into unverified channels', async t => {
   for (const member of [async()=>false,async()=>{throw Error('Provider unavailable');}]) {
@@ -145,15 +145,6 @@ test('a concurrent duplicate is not acknowledged before durable input, including
   assert.equal(acks,1);assert.equal(f.calls.filter(c=>c.path==='/v1/runs').length,1);
   assert.equal(f.sends.length,1);assert.equal((await f.receipts.load())[0].closed,true);
 });
-test('channel-local model/effort controls use exact catalog and canonical readback', async t => {
-  const f=await fixture(t);
-  await f.agent.receive(event(1,'!ez model codex model-b medium'));
-  await f.agent.receive(event(2,'!ez ai','C654321'));
-  assert.equal(f.settings.size,1);assert.equal(f.settings.get('slack:T123456:C123456').ai.presets[0].model,'model-b');
-  const writes=f.calls.filter(c=>c.body?.action);assert.equal(writes.length,1);assert.deepEqual(writes[0].body,{action:'model',cli:'codex',provider:'openai',model:'model-b',effort:'medium',expectedSession:null});
-  assert(f.sends[0].text.includes('model-b / medium'));assert(f.sends[1].text.includes('model-a / low'));
-  await f.agent.receive(event(3,'!ez model codex invented ultra'));assert.equal(f.calls.filter(c=>c.body?.action).length,1);
-});
 test('status reads live work and AI only in the requested channel or thread without mutations', async t => {
   for (const root of [undefined, '1234567.111111']) {
     const f=await fixture(t), scope=scopeFor(identity.teamId,'C123456',root);
@@ -193,21 +184,22 @@ test('status exposes unavailable or mismatched runs and uncertain input without 
   assert(f.calls.every(c=>c.body === undefined));assert.equal(f.settings.size,0);
   assert.equal((await f.receipts.load()).find(r=>r.key==='uncertain').uncertain,true);
 });
-test('status in an unused channel creates no native conversation and primary help focuses on AI', async t => {
+test('status in an unused channel creates no native conversation and help lists the controls', async t => {
   const f=await fixture(t);
   await f.agent.receive(event(1,'!ez status'));await f.agent.receive(event(2,'!ez help'));
   assert.match(f.sends[0].text,/Conversation: new/);
   assert.match(f.sends[0].text,/0 running; 0 queued; 0 finished awaiting delivery; 0 unavailable/);
-  assert.match(f.sends[1].text,/!ez ai list/);
+  assert.match(f.sends[1].text,/!ez status[\s\S]*!ez new[\s\S]*!ez stop[\s\S]*ask the agent in this conversation/);
+  assert(!/!ez (ai|model|select)\b/.test(f.sends[1].text));
   assert.equal(f.calls.length,1);assert.equal(f.settings.size,0);assert.equal(f.runs.size,0);
 });
 test('thread controls change only that thread, render there, and cancel only its pending runs', async t => {
   const f=await fixture(t), a='1234567.111111', b='1234567.222222';
-  await f.agent.receive(event(1,'!ez model codex model-b medium','C123456',a));
-  await f.agent.receive(event(2,'!ez ai','C123456',b));
-  await f.agent.receive(event(3,'!ez ai'));
-  assert.equal(f.settings.size,1);assert(f.sends[0].text.startsWith('This thread:'));assert(f.sends[0].text.includes('model-b / medium'));
-  assert(f.sends.slice(1).every(s=>s.text.includes('model-a / low')));
+  await f.agent.receive(event(1,'!ez new','C123456',a));
+  await f.agent.receive(event(2,'!ez status','C123456',b));
+  await f.agent.receive(event(3,'!ez status'));
+  assert.equal(f.settings.size,1);assert(f.sends[0].text.startsWith('New conversation in this thread:'));
+  assert.match(f.sends[1].text,/Conversation: new/);assert.match(f.sends[2].text,/Conversation: new/);
   assert.deepEqual(f.sends.map(s=>s.threadTs),[a,b,undefined]);
   for(const [key,root,n]of [['one',a,1],['two',b,2],['three',undefined,3]]) await f.receipts.change(key,r=>Object.assign(r,{channel:'C123456',threadTs:root,scope:scopeFor(identity.teamId,'C123456',root),runId:`r_app_${String(n).padStart(64,'0')}`}));
   await f.agent.receive(event(4,'!ez stop','C123456',a));
@@ -249,45 +241,15 @@ test('mutating controls with a lost response are not repeated', async t => {
 });
 
 
-test('AI controls show a concise selection and list catalog choices separately', async t => {
+test('removed AI controls are unknown controls and change nothing', async t => {
   const f = await fixture(t);
-  await f.agent.receive(event(1, '!ez ai'));
-  assert.equal(f.sends[0].text, 'This channel: codex / model-a / low. Use !ez ai list for choices.');
-  assert(!f.sends[0].text.includes('Presets:'));
-  await f.agent.receive(event(2, '!ez ai list'));
-  assert.match(f.sends[1].text, /codex model-b \(openai\) — effort: low, medium/);
+  for (const [n,text] of [[1,'!ez ai'],[2,'!ez ai list'],[3,'!ez ai codex model-b medium'],[4,'!ez model codex model-b'],[5,'!ez select default']]) {
+    await f.agent.receive(event(n,text));
+    assert.equal(f.sends.at(-1).text, 'Unknown control. Use !ez help.');
+  }
   assert.equal(f.calls.filter(c => c.body).length, 0);
   assert.equal(f.runs.size, 0);
-});
-
-test('AI selection and effort-only changes preserve provider/model and stay scoped', async t => {
-  const f = await fixture(t), root = '1234567.111111';
-  await f.agent.receive(event(1, '!ez ai codex model-b medium', 'C123456', root));
-  await f.agent.receive(event(2, '!ez ai effort low', 'C123456', root));
-  const writes = f.calls.filter(c => c.body?.action);
-  assert.equal(writes.length, 2);
-  assert.deepEqual(writes[1].body, {action:'model',cli:'codex',provider:'openai',model:'model-b',effort:'low',expectedSession:`session-${scopeFor(identity.teamId,'C123456',root)}`});
-  assert.equal(f.sends[1].text, 'This thread: codex / model-b / low.');
-  await f.agent.receive(event(3, '!ez ai'));
-  await f.agent.receive(event(4, '!ez ai', 'C654321'));
-  assert(f.sends.slice(2).every(s => s.text.includes('model-a / low')));
-  assert.equal(f.settings.size, 1);
-  const resumed = new Channel({...f.agent, receipts:f.receipts});
-  t.after(() => resumed.close());
-  await resumed.receive(event(5, '!ez ai', 'C123456', root));
-  assert.match(f.sends.at(-1).text, /model-b \/ low/);
-  assert.equal(f.runs.size, 0);
-});
-
-test('unsupported AI choices and efforts explain usage without changing settings', async t => {
-  const f = await fixture(t);
-  for (const [n,text] of [[1,'!ez ai codex invented low'],[2,'!ez ai codex model-a ultra'],[3,'!ez ai effort ultra'],[4,'!ez ai invalid'],[5,'!ez ai effort low extra']]) {
-    await f.agent.receive(event(n,text));
-    assert.match(f.sends.at(-1).text, /!ez ai/);
-  }
-  assert.equal(f.calls.filter(c => c.body?.action).length, 0);
-  assert.equal(f.runs.size, 0);
-  assert.equal((await f.receipts.load()).length, 5);
+  assert.equal(f.settings.size, 0);
 });
 
 test('file-only and captioned messages use one core attachment admission and retain thread scope', async t => {
@@ -355,36 +317,6 @@ test('a caption starting with !ez on a file is a prompt, not a control',async t=
   const p=event(96,'!ez new');p.event.files=[{id:'F123456'}];await f.agent.receive(p);await settled(f.agent);
   assert.equal(f.calls.filter(c=>c.body?.action).length,0);
   assert.equal(f.calls.find(c=>c.path==='/v1/runs').body.text,'!ez new');
-});
-
-test('Sonnet selection ignores named-login duplicates and preserves an explicit login on effort changes', async t => {
-  const models = [undefined, 'work'].map(authProfile => ({cli:'claude',authProfile,model:'sonnet',efforts:['low','medium','high']}));
-  const f = await fixture(t, {models});
-  await f.agent.receive(event(1, '!ez ai claude sonnet high'));
-  assert.match(f.sends.at(-1).text, /claude \/ sonnet \/ high/);
-  let selection = f.calls.filter(c=>c.body?.action === 'model').at(-1).body;
-  assert.equal(selection.authProfile, undefined);
-  assert.equal(selection.model, 'sonnet');
-  await f.agent.receive(event(2, '!ez ai claude@work sonnet high'));
-  await f.agent.receive(event(3, '!ez ai effort medium'));
-  selection = f.calls.filter(c=>c.body?.action === 'model').at(-1).body;
-  assert.equal(selection.authProfile, 'work');
-  assert.equal(selection.model, 'sonnet');
-  assert.equal(selection.effort, 'medium');
-  await f.agent.receive(event(4, '!ez ai claude sonnet xhigh'));
-  assert.match(f.sends.at(-1).text, /Effort xhigh is not supported.*low, medium, high/);
-  assert.equal(f.calls.filter(c=>c.body?.action === 'model').length, 3);
-});
-
-test('missing Claude catalog leaves the selected Opus xhigh chat unchanged', async t => {
-  const f = await fixture(t, {models:[]});
-  const scope = scopeFor(identity.teamId, 'C123456');
-  f.settings.set(scope, {activeSessionId:null,ai:{selectedId:'opus',presets:[{id:'opus',cli:'claude',model:'opus',effort:'xhigh'}]},models:[]});
-  await f.agent.receive(event(1, '!ez ai claude sonnet high'));
-  assert.match(f.sends.at(-1).text, /sonnet is not advertised for claude.*current selection unchanged/);
-  assert.equal(f.calls.filter(c=>c.body?.action).length, 0);
-  await f.agent.receive(event(2, '!ez ai'));
-  assert.match(f.sends.at(-1).text, /claude \/ opus \/ xhigh/);
 });
 
 const scheduled = (n, scope, extra = {}) => ({id:`r_schedule_${String(n).padStart(64,'0')}`,scope,status:'completed',messages:[{id:'m1',text:`Scheduled ${n}`}],approvals:[],originRunId:`r_app_${'1'.padStart(64,'0')}`,...extra});

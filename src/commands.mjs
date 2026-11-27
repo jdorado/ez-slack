@@ -1,23 +1,16 @@
 // One provider-owned control contract drives setup, Slack registration and help.
-const aiUsage = Object.freeze([
-  {args:'', description:'Show this channel’s CLI, model and effort'},
-  {args:'list', description:'List available CLIs, models and efforts'},
-  {args:'CLI MODEL [EFFORT]', description:'Set this channel’s AI'},
-  {args:'effort EFFORT', description:'Change only this channel’s effort'}
-]);
+// The AI is the agent's to change: ask it in the conversation.
 export const controls = Object.freeze([
   {name:'help', args:'', description:'List conversation controls', counts:[0]},
   {name:'status', args:'', description:'Read AI, conversation, work and delivery', counts:[0]},
-  {name:'ai', args:'[list | CLI MODEL [EFFORT] | effort EFFORT]', description:'Read or change this channel’s AI', counts:[0,1,2,3], usages:aiUsage},
-  {name:'select', args:'PRESET_ID', description:'Choose an AI preset', counts:[1]},
-  {name:'model', args:'CLI MODEL [EFFORT]', description:'Choose a model and effort', counts:[2,3]},
   {name:'new', args:'', description:'Start a fresh conversation', counts:[0]},
   {name:'stop', args:'', description:'Cancel pending runs in this conversation', counts:[0]}
 ].map(Object.freeze));
 
-// Existing controls remain accepted for compatibility; primary help is AI only.
-export const controlUsage = () => controls.find(c => c.name === 'ai').usages.map(c => ['ai',c.args].filter(Boolean).join(' ')).join(' | ');
-export const controlHelp = (prefix = '!ez') => controls.find(c => c.name === 'ai').usages.map(c => `${prefix} ${['ai',c.args].filter(Boolean).join(' ')} — ${c.description}`).join('\n');
+const listed = () => controls.filter(c => c.name !== 'help');
+export const controlUsage = () => listed().map(c => c.name).join(' | ');
+export const controlHelp = (prefix = '!ez') => [...listed().map(c => `${prefix} ${c.name} — ${c.description}`),
+  'To change the AI, ask the agent in this conversation.'].join('\n');
 
 export function slashCommandFor(name) {
   if (typeof name !== 'string' || !/^[A-Za-z0-9 _-]{1,40}$/.test(name)) throw Error('Supply --name BOT_NAME');

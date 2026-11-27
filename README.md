@@ -136,40 +136,34 @@ dependencies.
 
 ## Channel controls
 
-Use these four controls in the channel:
+Use these controls in the channel:
 
 ```text
-!ez ai
-!ez ai list
-!ez ai codex gpt-6.1-sol low
-!ez ai effort high
+!ez help
+!ez status
+!ez new
+!ez stop
 ```
 
-`!ez ai` shows only this channel's current CLI, model and effort. `!ez ai list`
-shows the installed catalog; choose exact CLI/model/effort values from it. Use `CLI@PROFILE` for a named login (for example, `!ez ai claude@work sonnet high`); plain `claude` selects the default login.
-`!ez ai CLI MODEL [EFFORT]` applies the selection through core and confirms its
-canonical readback. `!ez ai effort EFFORT` preserves the current CLI, login, provider and
-model and changes only its effort. Unsupported choices return usage guidance
-without changing settings or starting an agent turn.
+`!ez status` reads the AI, conversation, work and delivery state; `!ez new`
+starts a fresh conversation; `!ez stop` cancels pending runs. To change the AI,
+ask the agent in the conversation; there is no control for it.
 
-A new channel inherits the agent's selected AI when its conversation begins,
-then keeps its own selection. Changing one channel does not change Telegram or
-other channels. The same commands posted inside a thread apply only to that
-thread. Same-client/provider changes follow core/native conversation continuity;
-a different client/provider may start a fresh session.
+A channel or thread keeps its own AI and starts with the agent's default.
+Changing one channel does not change Telegram or other channels. The same
+controls posted inside a thread apply only to that thread.
 
-The generated slash command accepts the same arguments: for example
-`/ez-annie ai`, `/ez-annie ai list` or `/ez-annie ai codex gpt-6.1-sol low`.
-The bot and caller must both belong to the channel. Slack routes duplicate slash
-names to the most recently installed app, so setup derives a distinct command
-from each app name. Existing Slack apps require the generated manifest's command
-and scopes to be installed. Message controls work without slash registration.
-Custom slash commands cannot run inside threads; use `!ez ai` there.
+The generated slash command accepts the same controls: for example
+`/ez-annie status` or `/ez-annie new`. The bot and caller must both belong to the
+channel. Slack routes duplicate slash names to the most recently installed app, so
+setup derives a distinct command from each app name. Existing Slack apps require
+the generated manifest's command and scopes to be installed. Message controls
+work without slash registration. Custom slash commands cannot run inside threads;
+use `!ez status` there.
 
-Primary help focuses on AI selection. Earlier `model`, `select`, `status`, `new`
-and `stop` controls remain accepted for compatibility; Telegram remains the main
-surface for broader management. Controls use core's expected-session check and
-canonical readback. Uncertain operations are never replayed.
+Telegram remains the main surface for broader management. Controls use core's
+expected-session check and canonical readback. Uncertain operations are never
+replayed.
 
 Read the same canonical settings through the installed plugin:
 
