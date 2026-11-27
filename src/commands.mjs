@@ -1,10 +1,10 @@
 // One provider-owned control contract drives setup, Slack registration and help.
 // The AI is the agent's to change: ask it in the conversation.
 export const controls = Object.freeze([
-  {name:'help', args:'', description:'List conversation controls', counts:[0]},
-  {name:'status', args:'', description:'Read AI, conversation, work and delivery', counts:[0]},
-  {name:'new', args:'', description:'Start a fresh conversation', counts:[0]},
-  {name:'stop', args:'', description:'Cancel pending runs in this conversation', counts:[0]}
+  {name:'help', description:'List conversation controls', counts:[0]},
+  {name:'status', description:'Read AI, conversation, work and delivery', counts:[0]},
+  {name:'new', description:'Start a fresh conversation', counts:[0]},
+  {name:'stop', description:'Cancel pending runs in this conversation', counts:[0]}
 ].map(Object.freeze));
 
 const listed = () => controls.filter(c => c.name !== 'help');

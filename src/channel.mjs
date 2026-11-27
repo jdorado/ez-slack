@@ -155,7 +155,6 @@ export class Channel {
     if (!spec || !spec.counts.includes(args.length)) return 'Unknown control. Use !ez help.';
     if (command === 'help') return controlHelp();
     if (command === 'stop') {
-      if (args.length) throw Error('Use !ez stop');
       // Scheduled runs are background work; stopping a conversation never cancels them.
       const rows = (await this.receipts.load()).filter(r => r.scope === input.scope && r.runId && !r.closed && !r.scheduled);
       for (const r of rows) await this.core(`/v1/runs/${r.runId}/cancel`, {});
@@ -180,8 +179,7 @@ export class Channel {
         `Work: ${count('running')} running; ${count('queued')} queued; ${count('completed') + count('failed') + count('cancelled')} finished awaiting delivery; ${results.filter(r => r.status === 'rejected').length} unavailable`,
         `Transport: ${rows.filter(r => !r.runId && r.uncertain).length} unconfirmed inputs; ${rows.filter(r => r.uncertain || r.issue || unresolvedSend(r)).length} receipts need attention`].join('\n');
     }
-    const action = { action: 'new' };
-    await this.core(path, { ...action, expectedSession: controls.activeSessionId });
+    await this.core(path, { action: 'new', expectedSession: controls.activeSessionId });
     const readback = await this.core(path);
     return `New conversation in this ${place}: ${presetText(selectedPreset(readback))}.`;
   }
